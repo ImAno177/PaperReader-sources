@@ -69,11 +69,32 @@ jobs:
       - name: Build signed store index
         run: |
           mkdir -p dist
+          declare -A PACKAGES=(
+            [source-semanticscholar]=dev.paperreader.extensions.sources.semanticscholar
+            [source-crossref]=dev.paperreader.extensions.sources.crossref
+            [source-arxiv]=dev.paperreader.extensions.sources.arxiv
+            [source-europepmc]=dev.paperreader.extensions.sources.europepmc
+          )
+          declare -A SERVICES=(
+            [source-semanticscholar]=dev.paperreader.extensions.sources.semanticscholar.SemanticScholarService
+            [source-crossref]=dev.paperreader.extensions.sources.crossref.CrossrefService
+            [source-arxiv]=dev.paperreader.extensions.sources.arxiv.ArxivService
+            [source-europepmc]=dev.paperreader.extensions.sources.europepmc.EuropePmcService
+          )
+          SIGNER=""
           for module in source-semanticscholar source-crossref source-arxiv source-europepmc; do
             cp "$module/build/outputs/apk/release/$module-release.apk" "dist/$module.apk"
+            APK="dist/$module.apk"
+            "$ANDROID_HOME/build-tools/36.1.0/apksigner" verify --verbose --print-certs "$APK"
+            APK_SIGNER=$("$ANDROID_HOME/build-tools/36.1.0/apksigner" verify --print-certs "$APK" | sed -n 's/^Signer #1 certificate SHA-256 digest: //p')
+            test ${#APK_SIGNER} -eq 64
+            if [ -z "$SIGNER" ]; then SIGNER="$APK_SIGNER"; else test "$APK_SIGNER" = "$SIGNER"; fi
+            BADGING=$("$ANDROID_HOME/build-tools/36.1.0/aapt" dump badging "$APK")
+            printf '%s\n' "$BADGING" | grep -Fq "package: name='${PACKAGES[$module]}'"
+            MANIFEST=$("$ANDROID_HOME/build-tools/36.1.0/aapt" dump xmltree "$APK" AndroidManifest.xml)
+            printf '%s\n' "$MANIFEST" | grep -Fq "${SERVICES[$module]}"
+            printf '%s\n' "$MANIFEST" | grep -Fq "dev.paperreader.extensions.api.action.PAPER_SOURCE"
           done
-          SIGNER=$("$ANDROID_HOME/build-tools/36.1.0/apksigner" verify --print-certs dist/source-semanticscholar.apk | sed -n 's/^Signer #1 certificate SHA-256 digest: //p')
-          test ${#SIGNER} -eq 64
           python3 scripts/build_registry.py \
             --root . \
             --version-name "${{ inputs.version_name }}" \
