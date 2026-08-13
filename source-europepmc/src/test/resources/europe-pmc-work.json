@@ -1,0 +1,18 @@
+{
+  "source": "MED",
+  "id": "12345678",
+  "title": "A biomedical paper",
+  "abstractText": "Verified abstract.",
+  "doi": "10.1000/biomed",
+  "pmid": "12345678",
+  "pmcid": "PMC1234567",
+  "firstPublicationDate": "2025-01-20",
+  "isOpenAccess": "Y",
+  "authorList": {"author": [{"fullName": "Grace Hopper"}]},
+  "fullTextUrlList": {
+    "fullTextUrl": [{
+      "documentStyle": "pdf",
+      "url": "https://europepmc.org/articles/PMC1234567/bin/paper.pdf"
+    }]
+  }
+}

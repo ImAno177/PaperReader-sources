@@ -1,0 +1,12 @@
+{
+  "paperId": "204e3073870fae3d05bcbc2f6a8e263d9b72e776",
+  "title": "Attention Is All You Need",
+  "abstract": "A sequence transduction model based entirely on attention.",
+  "authors": [{"name": "Ashish Vaswani"}, {"name": "Noam Shazeer"}],
+  "publicationDate": "2017-06-12",
+  "externalIds": {
+    "DOI": "10.48550/arXiv.1706.03762",
+    "ArXiv": "1706.03762"
+  },
+  "citationCount": 152341
+}
