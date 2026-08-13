@@ -72,7 +72,7 @@ jobs:
           for module in source-semanticscholar source-crossref source-arxiv source-europepmc; do
             cp "$module/build/outputs/apk/release/$module-release.apk" "dist/$module.apk"
           done
-          SIGNER=$(apksigner verify --print-certs dist/source-semanticscholar.apk | sed -n 's/^Signer #1 certificate SHA-256 digest: //p')
+          SIGNER=$("$ANDROID_HOME/build-tools/36.1.0/apksigner" verify --print-certs dist/source-semanticscholar.apk | sed -n 's/^Signer #1 certificate SHA-256 digest: //p')
           test ${#SIGNER} -eq 64
           python3 scripts/build_registry.py \
             --root . \
