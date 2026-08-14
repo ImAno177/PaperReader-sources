@@ -9,4 +9,4 @@ android { namespace = "dev.paperreader.extensions.sources.arxiv"; compileSdk = 3
     buildTypes { getByName("release") { if (keystorePath != null) signingConfig = signingConfigs.getByName("extensionRelease") } }
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
 }
-dependencies { implementation(project(":source-common")); implementation("org.jsoup:jsoup:1.22.2"); testImplementation("junit:junit:4.13.2") }
+dependencies { implementation(project(":source-common")); implementation("org.jsoup:jsoup:1.23.1"); testImplementation("junit:junit:4.13.2") }
