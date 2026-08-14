@@ -9,4 +9,4 @@ android { namespace = "dev.paperreader.extensions.sources.semanticscholar"; comp
     buildTypes { getByName("release") { if (keystorePath != null) signingConfig = signingConfigs.getByName("extensionRelease") } }
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
 }
-dependencies { implementation(project(":source-common")); implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.9.0"); testImplementation("junit:junit:4.13.2") }
+dependencies { implementation(project(":source-common")); implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.11.0"); testImplementation("junit:junit:4.13.2") }
