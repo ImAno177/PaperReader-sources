@@ -239,8 +239,8 @@ abstract class PaperSourceService : Service() {
     private fun String.hexToBytes(): ByteArray = chunked(2).map { it.toInt(16).toByte() }.toByteArray()
 
     protected class SourceNotFoundException : RuntimeException()
-    private class SourceRateLimitedException(val retryAfterMillis: Long?) : RuntimeException()
-    private class SourceUnavailableException(message: String) : RuntimeException(message)
+    protected class SourceRateLimitedException(val retryAfterMillis: Long?) : RuntimeException()
+    protected class SourceUnavailableException(message: String) : RuntimeException(message)
 
     private companion object {
         const val HOST_PACKAGE = "dev.paperreader.app"
