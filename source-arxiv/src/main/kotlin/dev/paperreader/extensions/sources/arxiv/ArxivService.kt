@@ -18,10 +18,11 @@ import java.io.StringReader
 import javax.xml.parsers.DocumentBuilderFactory
 import org.xml.sax.InputSource
 import org.w3c.dom.Element
+import org.jsoup.Jsoup
 
 class ArxivService : PaperSourceService() {
     override val hostSignerSha256: String = BuildConfig.PAPERREADER_HOST_SIGNER_SHA256
-    override val allowedHosts = setOf("export.arxiv.org")
+    override val allowedHosts = setOf("arxiv.org", "export.arxiv.org")
     override val descriptor = SourceExtensionDescriptor(
         packageName = BuildConfig.APPLICATION_ID,
         providerId = "arxiv",
@@ -47,7 +48,11 @@ class ArxivService : PaperSourceService() {
             "search_query=all:${encode(request.query)}&start=$start&max_results=${request.limit}" +
                 "&sortBy=$sortBy&sortOrder=$sortOrder"
         }
-        val records = parse(get(request.requestId, "$BASE/query?$query", "application/atom+xml"))
+        val records = if (exactId == null) {
+            parse(get(request.requestId, "$BASE/query?$query", "application/atom+xml"))
+        } else {
+            exactRecord(request.requestId, exactId)
+        }
         return SourceSearchPage(
             requestId = request.requestId,
             records = records,
@@ -59,10 +64,18 @@ class ArxivService : PaperSourceService() {
 
     override suspend fun getPaperSource(request: SourceGetPaperRequest): SourcePaperResponse {
         val id = requireNotNull(request.providerRecordId.normalizeArxivId()) { "arXiv ID required" }
-        val record = parse(
-            get(request.requestId, "$BASE/query?id_list=${encode(id)}&max_results=1", "application/atom+xml"),
-        ).firstOrNull()
+        val record = exactRecord(request.requestId, id).firstOrNull()
         return SourcePaperResponse(request.requestId, record)
+    }
+
+    private suspend fun exactRecord(requestId: String, id: String): List<SourcePaperRecord> = try {
+        parse(get(requestId, "$BASE/query?id_list=${encode(id)}&max_results=1", "application/atom+xml"))
+    } catch (_: SourceNotFoundException) {
+        emptyList()
+    } catch (_: SourceRateLimitedException) {
+        listOfNotNull(parseHtml(get(requestId, "$HTML_BASE/abs/$id", "text/html"), id))
+    } catch (_: SourceUnavailableException) {
+        listOfNotNull(parseHtml(get(requestId, "$HTML_BASE/abs/$id", "text/html"), id))
     }
 
     internal companion object {
@@ -128,6 +141,49 @@ class ArxivService : PaperSourceService() {
         }
     }
 
+    internal fun parseHtml(html: String, requestedId: String): SourcePaperRecord? {
+        val document = Jsoup.parse(html)
+        val canonicalId = document.selectFirst("meta[property=og:url]")?.attr("content")
+            ?.normalizeArxivId()
+        val id = canonicalId ?: requestedId
+        require(id.substringBeforeVersion() == requestedId.substringBeforeVersion()) {
+            "arXiv HTML ID does not match request"
+        }
+        val title = document.selectFirst("h1.title")?.clone()?.apply { select(".descriptor").remove() }
+            ?.text()?.clean()?.takeIf(String::isNotBlank) ?: return null
+        val abstractText = document.selectFirst("blockquote.abstract")?.clone()?.apply {
+            select(".descriptor").remove()
+        }?.text()?.clean()?.takeIf(String::isNotBlank)
+        val publishedDate = document.selectFirst("meta[name=citation_date]")?.attr("content")
+            ?.normalizeDate()
+        val updatedAt = document.selectFirst("meta[name=citation_online_date]")?.attr("content")
+            ?.normalizeDate()
+        val subjects = document.selectFirst(".subjects")?.text()?.let { SUBJECT_CODE.findAll(it).map { match -> match.groupValues[1] }.toSet() }
+            .orEmpty()
+        val doi = document.selectFirst("#arxiv-doi-link")?.attr("href")
+            ?.substringAfter("doi.org/", "")?.normalizeDoi()
+        return SourcePaperRecord(
+            providerRecordId = id,
+            title = title,
+            abstractText = abstractText,
+            authors = document.select(".authors a").map { it.text().clean() }.filter(String::isNotBlank).take(100),
+            subjects = subjects.take(100).toSet(),
+            doi = doi,
+            arxivId = id,
+            publishedDate = publishedDate,
+            updatedAt = updatedAt,
+            manifestations = listOf(
+                SourceManifestation(
+                    type = "preprint",
+                    version = id.substringAfterLast('v', "").takeIf { it.all(Char::isDigit) }?.let { "v$it" },
+                    landingPageUrl = "$HTML_BASE/abs/$id",
+                    pdfUrl = "$HTML_BASE/pdf/$id",
+                    publishedDate = publishedDate,
+                ),
+            ),
+        )
+    }
+
     private fun Element.text(name: String, namespace: String = ATOM_NAMESPACE): String? =
         getElementsByTagNameNS(namespace, name).item(0)?.textContent?.trim()?.takeIf(String::isNotBlank)
 
@@ -141,16 +197,22 @@ class ArxivService : PaperSourceService() {
         return value.takeIf(ARXIV_ID::matches)
     }
 
+    private fun String.substringBeforeVersion(): String = replace(Regex("v\\d+$", RegexOption.IGNORE_CASE), "")
+
+    private fun String.normalizeDate(): String? = replace('/', '-').take(10).takeIf(ISO_DATE::matches)
+
     private fun String.normalizeDoi(): String? = trim().lowercase().takeIf(DOI::matches)
 
     private fun encode(value: String): String =
         URLEncoder.encode(value, StandardCharsets.UTF_8.name()).replace("+", "%20")
 
         const val BASE = "https://export.arxiv.org/api"
+        const val HTML_BASE = "https://arxiv.org"
         const val ATOM_NAMESPACE = "http://www.w3.org/2005/Atom"
         const val ARXIV_NAMESPACE = "http://arxiv.org/schemas/atom"
         val ISO_DATE = Regex("\\d{4}-\\d{2}-\\d{2}")
         val DOI = Regex("10\\.\\d{4,9}/\\S+", RegexOption.IGNORE_CASE)
+        val SUBJECT_CODE = Regex("\\(([A-Za-z0-9.-]+)\\)")
         val ARXIV_ID = Regex(
             "(?:\\d{4}\\.\\d{4,5}|[a-z][a-z0-9.-]*/\\d{7})(?:v\\d+)?",
             RegexOption.IGNORE_CASE,
