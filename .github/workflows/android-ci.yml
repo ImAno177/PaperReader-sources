@@ -53,6 +53,11 @@ jobs:
           retry-on-snapshot-warnings-timeout: 600
           # Build plugins are development-scope; never allow a vulnerable runtime dependency.
           fail-on-scopes: runtime
+          # AGP's build-only sdk-common -> commons-compress graph currently resolves
+          # commons-lang3 3.16.0 (GHSA-j288-q9x7-2f5v). The app/source APKs do not
+          # package this graph. Keep this exact advisory allowlisted until AGP ships
+          # the fixed transitive version; runtime findings still fail the check.
+          allow-ghsas: GHSA-j288-q9x7-2f5v
 
   quality:
     runs-on: ubuntu-24.04
