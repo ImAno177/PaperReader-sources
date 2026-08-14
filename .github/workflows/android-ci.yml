@@ -51,6 +51,8 @@ jobs:
         with:
           retry-on-snapshot-warnings: true
           retry-on-snapshot-warnings-timeout: 600
+          # Build plugins are development-scope; never allow a vulnerable runtime dependency.
+          fail-on-scopes: runtime
 
   quality:
     runs-on: ubuntu-24.04
