@@ -14,6 +14,31 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  dependency-submission:
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    permissions:
+      contents: write
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ImAno177/PaperReader
+          path: PaperReader
+          ref: ${{ vars.PAPERREADER_SDK_REF || 'main' }}
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699
+      - run: sdkmanager "platforms;android-36" "build-tools;36.1.0"
+      - uses: gradle/actions/dependency-submission@4733eaac7c1b0da527e4206b7671e0061de1ce37
+        with:
+          additional-arguments: -PpaperReaderSdkPath=PaperReader --no-configuration-cache
+          cache-provider: basic
+          dependency-graph: generate-and-submit
+
   quality:
     runs-on: ubuntu-24.04
     timeout-minutes: 40
