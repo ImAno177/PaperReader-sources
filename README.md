@@ -8,9 +8,10 @@ PaperReader AIDL contract. Provider code never runs inside the PaperReader proce
 
 ## Extensions
 
-- **Semantic Scholar** — default relevance search and citation counts.
+- **Semantic Scholar** — default relevance search and citation counts; anonymous quota failures return
+  a bounded cooldown instead of a retry storm.
 - **Crossref** — exact-DOI metadata enrichment; it is not a search or content source.
-- **arXiv** — paper discovery, metadata, landing pages, and PDF manifestations.
+- **arXiv** — phrase-aware title discovery, metadata, landing pages, and PDF manifestations.
 - **Europe PMC** — biomedical discovery, identifiers, and licensed open-access manifestations.
 
 ## Build

@@ -42,12 +42,16 @@ abstract class PaperSourceService : Service() {
     protected abstract val descriptor: SourceExtensionDescriptor
     protected abstract val hostSignerSha256: String
     protected abstract val allowedHosts: Set<String>
+    protected open val rateLimitBackoffBaseMillis: Long = DEFAULT_RATE_LIMIT_BACKOFF_MILLIS
+    protected open val userAgent: String = DEFAULT_USER_AGENT
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val jobs = ConcurrentHashMap<String, Job>()
     private val connections = ConcurrentHashMap<String, HttpURLConnection>()
+    /** Serializes provider calls as well as their start times (arXiv allows one connection). */
     private val rateGate = Mutex()
     private var nextRequestAtMillis = 0L
+    private val rateLimitPolicy by lazy { SourceRateLimitPolicy(rateLimitBackoffBaseMillis) }
 
     protected abstract suspend fun searchSource(request: SourceSearchRequest): SourceSearchPage
     protected abstract suspend fun getPaperSource(request: SourceGetPaperRequest): SourcePaperResponse
@@ -89,33 +93,47 @@ abstract class PaperSourceService : Service() {
     }
 
     protected suspend fun get(requestId: String, rawUrl: String, accept: String = "application/json"): String {
-        awaitRateGate()
-        return withContext(Dispatchers.IO) {
-            val uri = URI(rawUrl)
-            require(uri.scheme == "https" && uri.host?.lowercase() in allowedHosts) { "Unexpected source URL" }
-            val connection = uri.toURL().openConnection() as HttpURLConnection
-            connections[requestId] = connection
-            try {
-                connection.requestMethod = "GET"
-                connection.connectTimeout = CONNECT_TIMEOUT_MILLIS
-                connection.readTimeout = READ_TIMEOUT_MILLIS
-                connection.instanceFollowRedirects = false
-                connection.setRequestProperty("Accept", accept)
-                connection.setRequestProperty("User-Agent", USER_AGENT)
-                when (val status = connection.responseCode) {
-                    404 -> throw SourceNotFoundException()
-                    429 -> throw SourceRateLimitedException(parseRetryAfter(connection.getHeaderField("Retry-After")))
-                    in 200..299 -> readBounded(connection)
-                    else -> throw SourceUnavailableException("Provider returned HTTP $status")
+        return rateGate.withLock {
+            awaitRateGate()
+            withContext(Dispatchers.IO) {
+                val uri = URI(rawUrl)
+                require(uri.scheme == "https" && uri.host?.lowercase() in allowedHosts) { "Unexpected source URL" }
+                val connection = uri.toURL().openConnection() as HttpURLConnection
+                connections[requestId] = connection
+                try {
+                    connection.requestMethod = "GET"
+                    connection.connectTimeout = CONNECT_TIMEOUT_MILLIS
+                    connection.readTimeout = READ_TIMEOUT_MILLIS
+                    connection.instanceFollowRedirects = false
+                    connection.setRequestProperty("Accept", accept)
+                    connection.setRequestProperty("User-Agent", userAgent)
+                    when (val status = connection.responseCode) {
+                        404 -> throw SourceNotFoundException()
+                        429 -> {
+                            val retryAfter = parseRetryAfter(connection.getHeaderField("Retry-After"))
+                            val cooldown = retryAfter?.coerceAtLeast(MIN_RATE_LIMIT_DELAY_MILLIS)
+                                ?: rateLimitPolicy.nextBackoffMillis()
+                            nextRequestAtMillis = maxOf(
+                                nextRequestAtMillis,
+                                System.currentTimeMillis() + cooldown,
+                            )
+                            throw SourceRateLimitedException(cooldown)
+                        }
+                        in 200..299 -> {
+                            rateLimitPolicy.reset()
+                            readBounded(connection)
+                        }
+                        else -> throw SourceUnavailableException("Provider returned HTTP $status")
+                    }
+                } finally {
+                    connections.remove(requestId, connection)
+                    connection.disconnect()
                 }
-            } finally {
-                connections.remove(requestId, connection)
-                connection.disconnect()
             }
         }
     }
 
-    private suspend fun awaitRateGate() = rateGate.withLock {
+    private suspend fun awaitRateGate() {
         val waitMillis = (nextRequestAtMillis - System.currentTimeMillis()).coerceAtLeast(0)
         if (waitMillis > 0) delay(waitMillis)
         nextRequestAtMillis = System.currentTimeMillis() + descriptor.minimumRequestIntervalMillis
@@ -244,9 +262,35 @@ abstract class PaperSourceService : Service() {
 
     private companion object {
         const val HOST_PACKAGE = "dev.paperreader.app"
-        const val USER_AGENT = "PaperReader-sources/0.1 (Android)"
+        const val DEFAULT_USER_AGENT =
+            "PaperReader-sources/0.1 (Android; +https://github.com/ImAno177/PaperReader-sources)"
         const val CONNECT_TIMEOUT_MILLIS = 10_000
         const val READ_TIMEOUT_MILLIS = 20_000
         const val MAX_RESPONSE_BYTES = 2 * 1024 * 1024
+        const val MIN_RATE_LIMIT_DELAY_MILLIS = 1_000L
+        const val DEFAULT_RATE_LIMIT_BACKOFF_MILLIS = 60_000L
+    }
+}
+
+/** Exponential cooldown used when a provider omits Retry-After (common for shared API quotas). */
+internal class SourceRateLimitPolicy(
+    private val baseMillis: Long,
+    private val maximumMillis: Long = 5 * 60_000L,
+) {
+    private var strike = 0
+
+    init {
+        require(baseMillis > 0)
+        require(maximumMillis >= baseMillis)
+    }
+
+    fun nextBackoffMillis(): Long {
+        val multiplier = 1L shl strike.coerceIn(0, 3)
+        strike = (strike + 1).coerceAtMost(3)
+        return (baseMillis * multiplier).coerceAtMost(maximumMillis)
+    }
+
+    fun reset() {
+        strike = 0
     }
 }

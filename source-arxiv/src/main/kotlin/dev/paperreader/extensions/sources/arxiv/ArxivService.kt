@@ -12,6 +12,7 @@ import dev.paperreader.extensions.api.SourceSearchPage
 import dev.paperreader.extensions.api.SourceSearchRequest
 import dev.paperreader.extensions.api.SourceSearchSort
 import dev.paperreader.extensions.sources.common.PaperSourceService
+import java.io.IOException
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 import java.io.StringReader
@@ -23,6 +24,7 @@ import org.jsoup.Jsoup
 class ArxivService : PaperSourceService() {
     override val hostSignerSha256: String = BuildConfig.PAPERREADER_HOST_SIGNER_SHA256
     override val allowedHosts = setOf("arxiv.org", "export.arxiv.org")
+    override val rateLimitBackoffBaseMillis: Long = 15_000
     override val descriptor = SourceExtensionDescriptor(
         packageName = BuildConfig.APPLICATION_ID,
         providerId = "arxiv",
@@ -40,13 +42,7 @@ class ArxivService : PaperSourceService() {
         val query = if (exactId != null) {
             "id_list=${encode(exactId)}&max_results=1"
         } else {
-            val (sortBy, sortOrder) = when (request.sort) {
-                SourceSearchSort.RELEVANCE -> "relevance" to "descending"
-                SourceSearchSort.NEWEST -> "submittedDate" to "descending"
-                SourceSearchSort.OLDEST -> "submittedDate" to "ascending"
-            }
-            "search_query=all:${encode(request.query)}&start=$start&max_results=${request.limit}" +
-                "&sortBy=$sortBy&sortOrder=$sortOrder"
+            buildSearchQuery(request.query, start, request.limit, request.sort)
         }
         val records = if (exactId == null) {
             parse(get(request.requestId, "$BASE/query?$query", "application/atom+xml"))
@@ -76,9 +72,35 @@ class ArxivService : PaperSourceService() {
         listOfNotNull(parseHtml(get(requestId, "$HTML_BASE/abs/$id", "text/html"), id))
     } catch (_: SourceUnavailableException) {
         listOfNotNull(parseHtml(get(requestId, "$HTML_BASE/abs/$id", "text/html"), id))
+    } catch (_: IOException) {
+        listOfNotNull(parseHtml(get(requestId, "$HTML_BASE/abs/$id", "text/html"), id))
     }
 
     internal companion object {
+    /**
+     * arXiv treats an unqualified space-separated `all:` expression as an OR query. A natural
+     * language search is title-oriented in PaperReader, so preserve the user's phrase and let
+     * arXiv rank exact title matches instead of expanding every word into a broad OR query.
+     */
+    fun buildSearchQuery(
+        query: String,
+        start: Int,
+        limit: Int,
+        sort: SourceSearchSort,
+    ): String {
+        require(query.isNotBlank())
+        require(start >= 0)
+        require(limit in 1..100)
+        val (sortBy, sortOrder) = when (sort) {
+            SourceSearchSort.RELEVANCE -> "relevance" to "descending"
+            SourceSearchSort.NEWEST -> "submittedDate" to "descending"
+            SourceSearchSort.OLDEST -> "submittedDate" to "ascending"
+        }
+        val phrase = query.trim().replace("\\", "\\\\").replace("\"", "\\\"")
+        return "search_query=${encode("ti:\"$phrase\"")}&start=$start&max_results=$limit" +
+            "&sortBy=$sortBy&sortOrder=$sortOrder"
+    }
+
     fun parse(xml: String): List<SourcePaperRecord> {
         require(!xml.contains("<!DOCTYPE", ignoreCase = true)) { "DOCTYPE is not allowed" }
         val factory = DocumentBuilderFactory.newInstance().apply {
