@@ -51,7 +51,14 @@ jobs:
         with:
           retry-on-snapshot-warnings: true
           retry-on-snapshot-warnings-timeout: 600
-
+          # Build plugins are development-scope; never allow a vulnerable runtime dependency.
+          fail-on-scopes: runtime
+          # AGP's build-only sdk-common -> commons-compress graph currently resolves
+          # commons-lang3 3.16.0 (GHSA-j288-q9x7-2f5v) and httpclient 4.5.6
+          # (GHSA-7r82-7xv7-xcpj). The app/source APKs do not package this graph.
+          # Keep only these exact build-tool advisories allowlisted until AGP ships
+          # fixed transitives; runtime findings still fail the check.
+          allow-ghsas: GHSA-j288-q9x7-2f5v,GHSA-7r82-7xv7-xcpj
   quality:
     runs-on: ubuntu-24.04
     timeout-minutes: 40
@@ -69,7 +76,7 @@ jobs:
       - uses: android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699
       - name: Install Android SDK
         run: sdkmanager "platforms;android-36" "build-tools;36.1.0"
-      - uses: gradle/actions/setup-gradle@4733eaac7c1b0da527e4206b7671e0061de1ce37
+      - uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb
       - name: Make Gradle wrapper executable
         run: chmod +x gradlew
       - name: Test, lint, and assemble
