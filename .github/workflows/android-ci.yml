@@ -32,7 +32,7 @@ jobs:
           java-version: "21"
       - uses: android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699
       - run: sdkmanager "platforms;android-36" "build-tools;36.1.0"
-      - uses: gradle/actions/dependency-submission@4733eaac7c1b0da527e4206b7671e0061de1ce37
+      - uses: gradle/actions/dependency-submission@9c971963bec38e04b3d30dcc455b5382be2fdbfb
         with:
           additional-arguments: -PpaperReaderSdkPath=PaperReader --no-configuration-cache
           cache-provider: basic
