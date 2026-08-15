@@ -1,10 +1,37 @@
 package dev.paperreader.extensions.sources.arxiv
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Assert.assertThrows
 import org.junit.Test
 
 class ArxivServiceTest {
+    @Test
+    fun `natural language search preserves the phrase as a title query`() {
+        val query = ArxivService.buildSearchQuery(
+            query = "attention is all you need",
+            start = 0,
+            limit = 5,
+            sort = dev.paperreader.extensions.api.SourceSearchSort.RELEVANCE,
+        )
+
+        assertTrue(query.startsWith("search_query=ti%3A%22attention%20is%20all%20you%20need%22"))
+        assertTrue(query.contains("sortBy=relevance&sortOrder=descending"))
+    }
+
+    @Test
+    fun `natural language search escapes quote characters`() {
+        val query = ArxivService.buildSearchQuery(
+            query = "a \"quoted\" title",
+            start = 10,
+            limit = 2,
+            sort = dev.paperreader.extensions.api.SourceSearchSort.NEWEST,
+        )
+
+        assertTrue(query.contains("%5C%22quoted%5C%22"))
+        assertTrue(query.contains("start=10&max_results=2&sortBy=submittedDate&sortOrder=descending"))
+    }
+
     @Test
     fun `atom parser preserves exact version metadata and safe links`() {
         val record = ArxivService.parse(resource("arxiv-response.xml")).single()

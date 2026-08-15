@@ -41,6 +41,22 @@ class SemanticScholarService : PaperSourceService() {
         require(request.sort == SourceSearchSort.RELEVANCE) { "Semantic Scholar supports relevance sort only" }
         val offset = request.cursor?.toIntOrNull()?.coerceAtLeast(0) ?: 0
         val fields = "paperId,title,abstract,authors,year,publicationDate,externalIds,citationCount"
+        if (offset == 0 && isTitleLikeQuery(request.query)) {
+            val titleQuery = request.query.trim().removeSurrounding("\"").trim()
+            val titleMatch = runCatching {
+                json.parseToJsonElement(
+                    get(
+                        request.requestId,
+                        "$BASE/paper/search/match?query=${encode(titleQuery)}&fields=$fields",
+                    ),
+                ).jsonObject["data"]?.jsonArray?.firstOrNull()?.let(::record)
+            }.getOrElse { error ->
+                if (error is SourceNotFoundException) null else throw error
+            }
+            if (titleMatch != null) {
+                return SourceSearchPage(request.requestId, listOf(titleMatch), null)
+            }
+        }
         val root = json.parseToJsonElement(
             get(
                 request.requestId,
@@ -67,6 +83,14 @@ class SemanticScholarService : PaperSourceService() {
     }
 
     internal companion object {
+    /** Prefer Semantic Scholar's closest-title endpoint for title-shaped natural language. */
+    fun isTitleLikeQuery(query: String): Boolean {
+        val normalized = query.trim().removeSurrounding("\"").trim()
+        if (normalized.isEmpty() || normalized.contains(Regex("https?://|10\\.\\d{4,9}/|arxiv:"))) return false
+        val tokens = normalized.split(Regex("\\s+")).filter(String::isNotBlank)
+        return tokens.size >= 4 && tokens.any { it.lowercase() in TITLE_STOP_WORDS }
+    }
+
     fun record(element: JsonElement): SourcePaperRecord? {
         val value = element.jsonObject
         val id = value["paperId"]?.jsonPrimitive?.contentOrNull
@@ -120,5 +144,6 @@ class SemanticScholarService : PaperSourceService() {
         const val BASE = "https://api.semanticscholar.org/graph/v1"
         val PAPER_ID = Regex("[0-9a-fA-F]{40}")
         val ISO_DATE = Regex("\\d{4}-\\d{2}-\\d{2}")
+        val TITLE_STOP_WORDS = setOf("a", "an", "all", "and", "for", "in", "is", "of", "on", "the", "to", "you")
     }
 }

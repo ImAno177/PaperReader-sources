@@ -59,7 +59,6 @@ jobs:
           # Keep only these exact build-tool advisories allowlisted until AGP ships
           # fixed transitives; runtime findings still fail the check.
           allow-ghsas: GHSA-j288-q9x7-2f5v,GHSA-7r82-7xv7-xcpj
-
   quality:
     runs-on: ubuntu-24.04
     timeout-minutes: 40

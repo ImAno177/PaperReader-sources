@@ -7,6 +7,13 @@ import org.junit.Test
 
 class SemanticScholarServiceTest {
     @Test
+    fun `title shaped natural language uses closest title matching`() {
+        assertEquals(true, SemanticScholarService.isTitleLikeQuery("attention is all you need"))
+        assertEquals(false, SemanticScholarService.isTitleLikeQuery("graph neural networks"))
+        assertEquals(false, SemanticScholarService.isTitleLikeQuery("https://arxiv.org/abs/1706.03762"))
+    }
+
+    @Test
     fun `record preserves canonical identifiers and citation observation`() {
         val record = SemanticScholarService.record(Json.parseToJsonElement(resource("semantic-scholar-paper.json")))
 
