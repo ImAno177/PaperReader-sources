@@ -37,6 +37,9 @@ jobs:
           additional-arguments: -PpaperReaderSdkPath=PaperReader --no-configuration-cache
           cache-provider: basic
           dependency-graph: generate-and-submit
+          # Submit only code packaged into extension APKs. The default graph also
+          # includes AGP/Kotlin build plugins and generated false runtime alerts.
+          dependency-graph-include-configurations: ".*[Rr]eleaseRuntimeClasspath"
 
   dependency-review:
     if: github.event_name == 'pull_request'

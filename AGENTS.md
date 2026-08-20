@@ -12,4 +12,4 @@
 - Add a deterministic fixture test for every parser or routing change. Live API calls are diagnostics,
   not CI assertions.
 - Branches use `<type>/<kebab-case-summary>` with Conventional Commit types, for example
-  `feat/add-core-source` or `fix/crossref-doi-normalization`. Codex branches add `codex/` before it.
+  `feat/add-core-source` or `fix/crossref-doi-normalization`. Do not add tool, owner, or agent prefixes.
