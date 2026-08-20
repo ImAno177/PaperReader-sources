@@ -37,6 +37,10 @@ jobs:
           additional-arguments: -PpaperReaderSdkPath=PaperReader --no-configuration-cache
           cache-provider: basic
           dependency-graph: generate-and-submit
+          # Submit only code packaged into extension APKs. The default graph also
+          # includes the composite PaperReader SDK build and its host dependencies.
+          dependency-graph-include-projects: ":source-.*"
+          dependency-graph-include-configurations: ".*[Rr]eleaseRuntimeClasspath"
 
   dependency-review:
     if: github.event_name == 'pull_request'
@@ -49,16 +53,13 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294
         with:
-          retry-on-snapshot-warnings: true
-          retry-on-snapshot-warnings-timeout: 600
+          # Release registry commits made with GITHUB_TOKEN do not trigger a new
+          # workflow, so their exact base SHA may not have a dependency snapshot.
+          # In that case review the complete head runtime graph immediately instead
+          # of waiting ten minutes for a baseline that cannot appear.
+          retry-on-snapshot-warnings: false
           # Build plugins are development-scope; never allow a vulnerable runtime dependency.
           fail-on-scopes: runtime
-          # AGP's build-only sdk-common -> commons-compress graph currently resolves
-          # commons-lang3 3.16.0 (GHSA-j288-q9x7-2f5v) and httpclient 4.5.6
-          # (GHSA-7r82-7xv7-xcpj). The app/source APKs do not package this graph.
-          # Keep only these exact build-tool advisories allowlisted until AGP ships
-          # fixed transitives; runtime findings still fail the check.
-          allow-ghsas: GHSA-j288-q9x7-2f5v,GHSA-7r82-7xv7-xcpj
   quality:
     runs-on: ubuntu-24.04
     timeout-minutes: 40
