@@ -6,6 +6,7 @@ import android.content.pm.PackageManager
 import android.os.Binder
 import android.os.Bundle
 import android.os.IBinder
+import android.util.Log
 import dev.paperreader.extensions.api.ExtensionFailure
 import dev.paperreader.extensions.api.ExtensionFailureCode
 import dev.paperreader.extensions.api.ExtensionPayloadValidator
@@ -43,7 +44,12 @@ abstract class PaperSourceService : Service() {
     protected abstract val hostSignerSha256: String
     protected abstract val allowedHosts: Set<String>
     protected open val rateLimitBackoffBaseMillis: Long = DEFAULT_RATE_LIMIT_BACKOFF_MILLIS
-    protected open val userAgent: String = DEFAULT_USER_AGENT
+    protected open val userAgent: String by lazy {
+        val versionName = runCatching {
+            packageManager.getPackageInfo(packageName, 0).versionName
+        }.getOrNull()
+        buildSourceUserAgent(descriptor.providerId, versionName)
+    }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val jobs = ConcurrentHashMap<String, Job>()
@@ -51,7 +57,12 @@ abstract class PaperSourceService : Service() {
     /** Serializes provider calls as well as their start times (arXiv allows one connection). */
     private val rateGate = Mutex()
     private var nextRequestAtMillis = 0L
-    private val rateLimitPolicy by lazy { SourceRateLimitPolicy(rateLimitBackoffBaseMillis) }
+    private val rateLimitPolicy by lazy {
+        SourceRateLimitPolicy(
+            baseMillis = rateLimitBackoffBaseMillis,
+            maximumMillis = maxOf(rateLimitBackoffBaseMillis, DEFAULT_MAX_RATE_LIMIT_BACKOFF_MILLIS),
+        )
+    }
 
     protected abstract suspend fun searchSource(request: SourceSearchRequest): SourceSearchPage
     protected abstract suspend fun getPaperSource(request: SourceGetPaperRequest): SourcePaperResponse
@@ -168,6 +179,12 @@ abstract class PaperSourceService : Service() {
                     )
                 }
             } catch (error: Exception) {
+                Log.w(
+                    LOG_TAG,
+                    "${descriptor.providerId} request failed (${error.javaClass.simpleName}): " +
+                        error.safeMessage("No diagnostic message"),
+                    error,
+                )
                 runCatching { callback.onFailure(error.toFailure(requestId).toBundle()) }
             } finally {
                 jobs.remove(requestId)
@@ -262,14 +279,24 @@ abstract class PaperSourceService : Service() {
 
     private companion object {
         const val HOST_PACKAGE = "dev.paperreader.app"
-        const val DEFAULT_USER_AGENT =
-            "PaperReader-sources/0.1 (Android; +https://github.com/ImAno177/PaperReader-sources)"
         const val CONNECT_TIMEOUT_MILLIS = 10_000
         const val READ_TIMEOUT_MILLIS = 20_000
         const val MAX_RESPONSE_BYTES = 2 * 1024 * 1024
         const val MIN_RATE_LIMIT_DELAY_MILLIS = 1_000L
         const val DEFAULT_RATE_LIMIT_BACKOFF_MILLIS = 60_000L
+        const val DEFAULT_MAX_RATE_LIMIT_BACKOFF_MILLIS = 5 * 60_000L
+        const val LOG_TAG = "PaperSourceService"
     }
+}
+
+internal fun buildSourceUserAgent(providerId: String, versionName: String?): String {
+    val providerToken = providerId.replace(Regex("[^A-Za-z0-9._-]"), "_")
+    val versionToken = versionName
+        ?.trim()
+        ?.replace(Regex("[^A-Za-z0-9._-]"), "_")
+        ?.takeIf(String::isNotBlank)
+        ?: "unknown"
+    return "PaperReader-$providerToken/$versionToken (Android; +https://github.com/ImAno177/PaperReader-sources)"
 }
 
 /** Exponential cooldown used when a provider omits Retry-After (common for shared API quotas). */
