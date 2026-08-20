@@ -38,7 +38,8 @@ jobs:
           cache-provider: basic
           dependency-graph: generate-and-submit
           # Submit only code packaged into extension APKs. The default graph also
-          # includes AGP/Kotlin build plugins and generated false runtime alerts.
+          # includes the composite PaperReader SDK build and its host dependencies.
+          dependency-graph-include-projects: ":source-.*"
           dependency-graph-include-configurations: ".*[Rr]eleaseRuntimeClasspath"
 
   dependency-review:
@@ -59,12 +60,6 @@ jobs:
           retry-on-snapshot-warnings: false
           # Build plugins are development-scope; never allow a vulnerable runtime dependency.
           fail-on-scopes: runtime
-          # AGP's build-only sdk-common -> commons-compress graph currently resolves
-          # commons-lang3 3.16.0 (GHSA-j288-q9x7-2f5v) and httpclient 4.5.6
-          # (GHSA-7r82-7xv7-xcpj). The app/source APKs do not package this graph.
-          # Keep only these exact build-tool advisories allowlisted until AGP ships
-          # fixed transitives; runtime findings still fail the check.
-          allow-ghsas: GHSA-j288-q9x7-2f5v,GHSA-7r82-7xv7-xcpj
   quality:
     runs-on: ubuntu-24.04
     timeout-minutes: 40
