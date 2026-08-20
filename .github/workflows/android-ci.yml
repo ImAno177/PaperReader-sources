@@ -52,8 +52,11 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294
         with:
-          retry-on-snapshot-warnings: true
-          retry-on-snapshot-warnings-timeout: 600
+          # Release registry commits made with GITHUB_TOKEN do not trigger a new
+          # workflow, so their exact base SHA may not have a dependency snapshot.
+          # In that case review the complete head runtime graph immediately instead
+          # of waiting ten minutes for a baseline that cannot appear.
+          retry-on-snapshot-warnings: false
           # Build plugins are development-scope; never allow a vulnerable runtime dependency.
           fail-on-scopes: runtime
           # AGP's build-only sdk-common -> commons-compress graph currently resolves
