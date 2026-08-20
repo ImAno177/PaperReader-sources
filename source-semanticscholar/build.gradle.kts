@@ -12,4 +12,4 @@ android { namespace = "dev.paperreader.extensions.sources.semanticscholar"; comp
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
 }
 androidComponents { onVariants(selector().all()) { variant -> variant.buildConfigFields?.put("PAPERREADER_HOST_SIGNER_SHA256", BuildConfigField("String", "\"$hostSigner\"", "Pinned host signing certificate digest")) } }
-dependencies { implementation(project(":source-common")); implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.9.0"); testImplementation("junit:junit:4.13.2") }
+dependencies { implementation(project(":source-common")); implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.11.0"); testImplementation("junit:junit:4.13.2") }
