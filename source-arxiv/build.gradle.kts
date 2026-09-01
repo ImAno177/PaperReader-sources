@@ -12,4 +12,4 @@ android { namespace = "dev.paperreader.extensions.sources.arxiv"; compileSdk = 3
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
 }
 androidComponents { onVariants(selector().all()) { variant -> variant.buildConfigFields?.put("PAPERREADER_HOST_SIGNER_SHA256", BuildConfigField("String", "\"$hostSigner\"", "Pinned host signing certificate digest")) } }
-dependencies { implementation(project(":source-common")); implementation("org.jsoup:jsoup:1.23.1"); testImplementation("junit:junit:4.13.2") }
+dependencies { implementation(project(":source-common")); implementation("org.jsoup:jsoup:1.23.2"); testImplementation("junit:junit:4.13.2") }
