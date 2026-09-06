@@ -37,7 +37,7 @@ its request policy, and its parser.
 
 | Area | Technology |
 | --- | --- |
-| Android | Kotlin, min SDK 28, target SDK 36, Android SDK Platform 36 |
+| Android | Kotlin, min SDK 28, target SDK 36, Android SDK Platform 37 |
 | Contract | `dev.paperreader:extension-api:0.1.0` over versioned AIDL |
 | Shared transport | Bounded HTTP, rate gating, cancellation, and caller verification |
 | Build | Gradle wrapper, Java and Kotlin target 17, JDK 21 in CI |
@@ -61,7 +61,7 @@ matching capability. Crossref is not a fuzzy search provider.
 
 - A PaperReader checkout containing the `:extension-api` module
 - JDK 21
-- Android SDK Platform 36 and Build-Tools 36.1.0
+- Android SDK Platform 37 and Build-Tools 36.1.0
 
 Place the PaperReader checkout in a directory named `PaperReader` under this repository, then run
 the local gate:
