@@ -11,7 +11,10 @@ import dev.paperreader.extensions.api.SourceRole
 import dev.paperreader.extensions.api.SourceSearchPage
 import dev.paperreader.extensions.api.SourceSearchRequest
 import dev.paperreader.extensions.api.SourceSearchSort
+import dev.paperreader.extensions.api.SourceGetReadableDocumentRequest
+import dev.paperreader.extensions.api.SourceReadableDocumentMetadata
 import dev.paperreader.extensions.sources.common.PaperSourceService
+import dev.paperreader.extensions.sources.common.SourceReadableDocumentPayload
 import java.io.IOException
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
@@ -30,7 +33,12 @@ class ArxivService : PaperSourceService() {
         providerId = "arxiv",
         displayName = "arXiv",
         minimumRequestIntervalMillis = 3_000,
-        capabilities = setOf(SourceCapability.SEARCH, SourceCapability.DETAILS, SourceCapability.PDF_LINK),
+        capabilities = setOf(
+            SourceCapability.SEARCH,
+            SourceCapability.DETAILS,
+            SourceCapability.PDF_LINK,
+            SourceCapability.READABLE_DOCUMENT,
+        ),
         roles = setOf(SourceRole.CONTENT_SOURCE),
         identifierLookupTypes = setOf(SourceIdentifierType.ARXIV),
         supportedSorts = SourceSearchSort.entries.toSet(),
@@ -62,6 +70,42 @@ class ArxivService : PaperSourceService() {
         val id = requireNotNull(request.providerRecordId.normalizeArxivId()) { "arXiv ID required" }
         val record = exactRecord(request.requestId, id).firstOrNull()
         return SourcePaperResponse(request.requestId, record)
+    }
+
+    override suspend fun getReadableDocumentSource(
+        request: SourceGetReadableDocumentRequest,
+    ): SourceReadableDocumentPayload {
+        val normalizedId = requireNotNull(request.providerRecordId.normalizeArxivId()) { "arXiv ID required" }
+        val versionedId = if (VERSIONED_ARXIV_ID.matches(normalizedId)) {
+            require(normalizedId.endsWith(request.version)) { "Readable version does not match record" }
+            normalizedId
+        } else {
+            "$normalizedId${request.version}"
+        }
+        val sourceUrl = "$HTML_BASE/html/$versionedId"
+        val rawHtml = get(
+            requestId = request.requestId,
+            rawUrl = sourceUrl,
+            accept = "text/html, application/xhtml+xml;q=0.9",
+            maximumBytes = 4L * 1024L * 1024L,
+        )
+        val rawBytes = rawHtml.toByteArray(Charsets.UTF_8)
+        val sanitized = ArxivReadableDocumentSanitizer().sanitize(rawHtml, sourceUrl)
+            ?: throw IllegalArgumentException("arXiv HTML failed readable-document checks")
+        val bodyBytes = sanitized.bodyHtml.toByteArray(Charsets.UTF_8)
+        val metadata = SourceReadableDocumentMetadata(
+            requestId = request.requestId,
+            title = sanitized.title,
+            sourceUrl = sourceUrl,
+            sourceVersion = request.version,
+            license = sanitized.sourceLicense,
+            sourceSha256 = sha256(rawBytes),
+            documentSha256 = sha256(bodyBytes),
+            sections = sanitized.sections,
+            warnings = sanitized.warnings,
+            assets = sanitized.assets,
+        )
+        return SourceReadableDocumentPayload(metadata, bodyBytes)
     }
 
     private suspend fun exactRecord(requestId: String, id: String): List<SourcePaperRecord> = try {
@@ -225,6 +269,10 @@ class ArxivService : PaperSourceService() {
 
     private fun String.normalizeDoi(): String? = trim().lowercase().takeIf(DOI::matches)
 
+    private fun sha256(bytes: ByteArray): String = java.security.MessageDigest.getInstance("SHA-256")
+        .digest(bytes)
+        .joinToString("") { "%02x".format(it) }
+
     private fun encode(value: String): String =
         URLEncoder.encode(value, StandardCharsets.UTF_8.name()).replace("+", "%20")
 
@@ -237,6 +285,10 @@ class ArxivService : PaperSourceService() {
         val SUBJECT_CODE = Regex("\\(([A-Za-z0-9.-]+)\\)")
         val ARXIV_ID = Regex(
             "(?:\\d{4}\\.\\d{4,5}|[a-z][a-z0-9.-]*/\\d{7})(?:v\\d+)?",
+            RegexOption.IGNORE_CASE,
+        )
+        val VERSIONED_ARXIV_ID = Regex(
+            "(?:\\d{4}\\.\\d{4,5}|[a-z][a-z0-9.-]*/\\d{7})v[1-9][0-9]*",
             RegexOption.IGNORE_CASE,
         )
     }

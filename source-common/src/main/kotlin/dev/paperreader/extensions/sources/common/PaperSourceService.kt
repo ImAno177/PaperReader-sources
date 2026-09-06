@@ -11,6 +11,7 @@ import dev.paperreader.extensions.api.ExtensionFailure
 import dev.paperreader.extensions.api.ExtensionFailureCode
 import dev.paperreader.extensions.api.ExtensionPayloadValidator
 import dev.paperreader.extensions.api.IPaperSourceCallback
+import dev.paperreader.extensions.api.IPaperReadableDocumentCallback
 import dev.paperreader.extensions.api.IPaperSourceService
 import dev.paperreader.extensions.api.PaperExtensionContract
 import dev.paperreader.extensions.api.SourceExtensionDescriptor
@@ -18,6 +19,9 @@ import dev.paperreader.extensions.api.SourceGetPaperRequest
 import dev.paperreader.extensions.api.SourcePaperResponse
 import dev.paperreader.extensions.api.SourceSearchPage
 import dev.paperreader.extensions.api.SourceSearchRequest
+import dev.paperreader.extensions.api.SourceGetReadableDocumentRequest
+import dev.paperreader.extensions.api.SourceReadableDocumentChunk
+import dev.paperreader.extensions.api.SourceReadableDocumentMetadata
 import java.io.ByteArrayOutputStream
 import java.net.HttpURLConnection
 import java.net.URI
@@ -66,6 +70,9 @@ abstract class PaperSourceService : Service() {
 
     protected abstract suspend fun searchSource(request: SourceSearchRequest): SourceSearchPage
     protected abstract suspend fun getPaperSource(request: SourceGetPaperRequest): SourcePaperResponse
+    protected open suspend fun getReadableDocumentSource(
+        request: SourceGetReadableDocumentRequest,
+    ): SourceReadableDocumentPayload = throw UnsupportedOperationException("Readable documents are not supported")
 
     private val binder = object : IPaperSourceService.Stub() {
         override fun getDescriptor(): Bundle {
@@ -87,6 +94,16 @@ abstract class PaperSourceService : Service() {
             }
         }
 
+        override fun getReadableDocument(
+            request: Bundle,
+            callback: IPaperReadableDocumentCallback,
+        ) {
+            requirePaperReaderCaller()
+            decodeReadable(request, callback, SourceGetReadableDocumentRequest::fromBundle)?.let { decoded ->
+                submitReadable(decoded.requestId, callback) { getReadableDocumentSource(decoded) }
+            }
+        }
+
         override fun cancel(requestId: String) {
             requirePaperReaderCaller()
             connections.remove(requestId)?.disconnect()
@@ -103,7 +120,13 @@ abstract class PaperSourceService : Service() {
         super.onDestroy()
     }
 
-    protected suspend fun get(requestId: String, rawUrl: String, accept: String = "application/json"): String {
+    protected suspend fun get(
+        requestId: String,
+        rawUrl: String,
+        accept: String = "application/json",
+        maximumBytes: Long = MAX_RESPONSE_BYTES.toLong(),
+    ): String {
+        require(maximumBytes in 1..MAX_READABLE_DOCUMENT_BYTES)
         return rateGate.withLock {
             awaitRateGate()
             withContext(Dispatchers.IO) {
@@ -132,7 +155,7 @@ abstract class PaperSourceService : Service() {
                         }
                         in 200..299 -> {
                             rateLimitPolicy.reset()
-                            readBounded(connection)
+                            readBounded(connection, maximumBytes)
                         }
                         else -> throw SourceUnavailableException("Provider returned HTTP $status")
                     }
@@ -150,16 +173,16 @@ abstract class PaperSourceService : Service() {
         nextRequestAtMillis = System.currentTimeMillis() + descriptor.minimumRequestIntervalMillis
     }
 
-    private fun readBounded(connection: HttpURLConnection): String {
+    private fun readBounded(connection: HttpURLConnection, maximumBytes: Long): String {
         val declaredLength = connection.contentLengthLong
-        require(declaredLength <= MAX_RESPONSE_BYTES || declaredLength < 0) { "Provider response is too large" }
+        require(declaredLength <= maximumBytes || declaredLength < 0) { "Provider response is too large" }
         val output = ByteArrayOutputStream()
         connection.inputStream.use { input ->
             val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
             while (true) {
                 val count = input.read(buffer)
                 if (count < 0) break
-                require(output.size() + count <= MAX_RESPONSE_BYTES) { "Provider response is too large" }
+                require(output.size().toLong() + count <= maximumBytes) { "Provider response is too large" }
                 output.write(buffer, 0, count)
             }
         }
@@ -222,6 +245,78 @@ abstract class PaperSourceService : Service() {
             null
         }
 
+    private fun <T> decodeReadable(
+        request: Bundle,
+        callback: IPaperReadableDocumentCallback,
+        block: (Bundle) -> T,
+    ): T? = try {
+        block(request)
+    } catch (error: Exception) {
+        runCatching {
+            callback.onFailure(
+                ExtensionFailure(
+                    requestId = "invalid-request",
+                    code = ExtensionFailureCode.INVALID_REQUEST,
+                    message = error.safeMessage("Invalid request"),
+                ).toBundle(),
+            )
+        }
+        null
+    }
+
+    private fun submitReadable(
+        requestId: String,
+        callback: IPaperReadableDocumentCallback,
+        block: suspend () -> SourceReadableDocumentPayload,
+    ) {
+        val job = scope.launch(start = CoroutineStart.LAZY) {
+            try {
+                val payload = block()
+                require(payload.metadata.requestId == requestId)
+                payload.body.asList().chunked(PaperExtensionContract.MAX_READABLE_DOCUMENT_CHUNK_BYTES).forEachIndexed { index, bytes ->
+                    callback.onChunk(
+                        SourceReadableDocumentChunk(
+                            requestId = requestId,
+                            sequence = index,
+                            bytes = bytes.toByteArray(),
+                        ).toBundle(),
+                    )
+                }
+                callback.onComplete(payload.metadata.toBundle())
+            } catch (_: CancellationException) {
+                runCatching {
+                    callback.onFailure(
+                        ExtensionFailure(requestId, ExtensionFailureCode.CANCELLED, "Request cancelled").toBundle(),
+                    )
+                }
+            } catch (error: Exception) {
+                Log.w(
+                    LOG_TAG,
+                    "${descriptor.providerId} readable request failed (${error.javaClass.simpleName}): " +
+                        error.safeMessage("No diagnostic message"),
+                    error,
+                )
+                runCatching { callback.onFailure(error.toFailure(requestId).toBundle()) }
+            } finally {
+                jobs.remove(requestId)
+            }
+        }
+        if (jobs.putIfAbsent(requestId, job) == null) {
+            job.start()
+        } else {
+            job.cancel()
+            runCatching {
+                callback.onFailure(
+                    ExtensionFailure(
+                        requestId,
+                        ExtensionFailureCode.INVALID_REQUEST,
+                        "Duplicate request ID",
+                    ).toBundle(),
+                )
+            }
+        }
+    }
+
     private fun requirePaperReaderCaller() {
         val packages = packageManager.getPackagesForUid(Binder.getCallingUid()).orEmpty()
         require(HOST_PACKAGE in packages) { "Caller is not PaperReader" }
@@ -282,12 +377,29 @@ abstract class PaperSourceService : Service() {
         const val CONNECT_TIMEOUT_MILLIS = 10_000
         const val READ_TIMEOUT_MILLIS = 20_000
         const val MAX_RESPONSE_BYTES = 2 * 1024 * 1024
+        const val MAX_READABLE_DOCUMENT_BYTES = MAX_SOURCE_READABLE_DOCUMENT_BYTES
         const val MIN_RATE_LIMIT_DELAY_MILLIS = 1_000L
         const val DEFAULT_RATE_LIMIT_BACKOFF_MILLIS = 60_000L
         const val DEFAULT_MAX_RATE_LIMIT_BACKOFF_MILLIS = 5 * 60_000L
         const val LOG_TAG = "PaperSourceService"
     }
 }
+
+data class SourceReadableDocumentPayload(
+    val metadata: SourceReadableDocumentMetadata,
+    val body: ByteArray,
+) {
+    init {
+        require(body.isNotEmpty() && body.size <= MAX_SOURCE_READABLE_DOCUMENT_BYTES)
+        require(metadata.documentSha256 == body.sha256())
+    }
+
+    private fun ByteArray.sha256(): String = java.security.MessageDigest.getInstance("SHA-256")
+        .digest(this)
+        .joinToString("") { "%02x".format(it) }
+}
+
+private const val MAX_SOURCE_READABLE_DOCUMENT_BYTES = 4L * 1024L * 1024L
 
 internal fun buildSourceUserAgent(providerId: String, versionName: String?): String {
     val providerToken = providerId.replace(Regex("[^A-Za-z0-9._-]"), "_")
