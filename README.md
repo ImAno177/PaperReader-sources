@@ -31,7 +31,9 @@ rebuilding the PaperReader host.
 
 Each source runs in its own Android package and UID. Requests cross a bounded, cancellable AIDL
 contract. The host owns identity, persistence, routing, trust, and UI; a source owns one upstream API,
-its request policy, and its parser.
+its request policy, and its parser. The arXiv source also owns exact-version readable-HTML parsing and
+sanitization; the host receives that document through bounded Binder chunks and fetches its validated
+same-document assets on a separate lane.
 
 ## Built with
 
@@ -49,7 +51,7 @@ its request policy, and its parser.
 | --- | --- | --- |
 | Semantic Scholar | Search engine | Preferred free-text relevance search and citation observations, with bounded anonymous-quota cooldowns |
 | Crossref | Metadata engine | Exact normalized DOI metadata enrichment only |
-| arXiv | Content source | Phrase-aware discovery, metadata, exact identifier/version lookup, landing pages, and PDF manifestations |
+| arXiv | Content source | Phrase-aware discovery, metadata, exact identifier/version lookup, landing pages, PDF manifestations, and the opt-in readable_document capability |
 | Europe PMC | Content source | Biomedical discovery, DOI/PMID/PMCID lookup, and licensed open-access manifestations |
 
 The host can use arXiv and Europe PMC as authoritative discovery fallbacks when they advertise the
@@ -93,6 +95,11 @@ Each provider APK is written under that provider module's `build/outputs/apk/` d
 repository's CI and release workflows use the same local build contract, but live provider calls are
 not deterministic tests.
 
+The local host demo enables the arXiv readable-document capability with
+`paperReaderDevSourceCapabilities=search,details,pdf_link,readable_document` and must use the same
+debug signer digest for the host and source APK. The signed registry remains the release source of
+truth and is not modified by this local-only configuration.
+
 ## Usage
 
 Install compatible signed APKs from the [repository releases](https://github.com/ImAno177/PaperReader-sources/releases)
@@ -103,6 +110,12 @@ artifact digest, then asks Android to confirm installation or update.
 If a provider is unavailable, the host keeps other provider results and exposes a source-specific
 failure or retry action. Disabling a source excludes it from new discovery without deleting saved
 records or their provenance.
+
+For a readable-document request, the arXiv service resolves the exact version, sanitizes the HTML,
+returns sections/warnings/asset references, and streams the UTF-8 body through
+`IPaperReadableDocumentCallback`. The service caps the body at 4 MiB and each callback chunk at
+384 KiB; the host independently validates hashes and materializes the referenced assets. No
+arbitrary figure-count limit is used.
 
 ## Release and registry
 
