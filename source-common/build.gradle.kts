@@ -4,7 +4,7 @@ plugins {
 
 android {
     namespace = "dev.paperreader.extensions.sources.common"
-    compileSdk = 36
+    compileSdk = 37
 
     defaultConfig { minSdk = 28 }
     compileOptions {
