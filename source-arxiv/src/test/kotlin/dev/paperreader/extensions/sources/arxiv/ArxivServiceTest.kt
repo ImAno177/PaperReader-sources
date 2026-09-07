@@ -1,6 +1,7 @@
 package dev.paperreader.extensions.sources.arxiv
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Assert.assertThrows
 import org.junit.Test
@@ -93,6 +94,38 @@ class ArxivServiceTest {
         }
     }
 
+    @Test
+    fun `readable fixture publishes versioned metadata and opaque asset references`() {
+        val sourceUrl = "https://arxiv.org/html/2501.04510v2"
+        val rawHtml = resource("arxiv-readable.html")
+        val sanitized = requireNotNull(ArxivReadableDocumentSanitizer().sanitize(rawHtml, sourceUrl))
+        val bodyBytes = sanitized.bodyHtml.toByteArray(Charsets.UTF_8)
+        val metadata = buildReadableMetadata(
+            request = dev.paperreader.extensions.api.SourceGetReadableDocumentRequest(
+                requestId = "readable-fixture",
+                providerRecordId = "2501.04510v2",
+                version = "v2",
+            ),
+            sourceUrl = sourceUrl,
+            rawBytes = rawHtml.toByteArray(Charsets.UTF_8),
+            bodyBytes = bodyBytes,
+            sanitized = sanitized,
+        )
+
+        assertEquals(ARXIV_READABLE_CONTRACT_VERSION, metadata.contractVersion)
+        assertEquals(sha256(rawHtml.toByteArray(Charsets.UTF_8)), metadata.sourceSha256)
+        assertEquals(sha256(bodyBytes), metadata.documentSha256)
+        assertTrue(metadata.assets.single().id.matches(Regex("[0-9a-f]{64}")))
+        assertTrue(metadata.assets.single().sourceUrl.startsWith("https://arxiv.org/html/2501.04510v2/"))
+        assertTrue(sanitized.bodyHtml.contains("paperreader-asset://"))
+        assertFalse(sanitized.bodyHtml.contains("data:image"))
+        assertFalse(sanitized.bodyHtml.contains("<script", ignoreCase = true))
+    }
+
     private fun resource(name: String): String =
         requireNotNull(javaClass.getResource("/$name")).readText()
+
+    private fun sha256(bytes: ByteArray): String = java.security.MessageDigest.getInstance("SHA-256")
+        .digest(bytes)
+        .joinToString("") { "%02x".format(it) }
 }

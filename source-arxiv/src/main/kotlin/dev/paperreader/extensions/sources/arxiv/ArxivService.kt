@@ -19,6 +19,7 @@ import java.io.IOException
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 import java.io.StringReader
+import java.security.MessageDigest
 import javax.xml.parsers.DocumentBuilderFactory
 import org.xml.sax.InputSource
 import org.w3c.dom.Element
@@ -93,17 +94,12 @@ class ArxivService : PaperSourceService() {
         val sanitized = ArxivReadableDocumentSanitizer().sanitize(rawHtml, sourceUrl)
             ?: throw IllegalArgumentException("arXiv HTML failed readable-document checks")
         val bodyBytes = sanitized.bodyHtml.toByteArray(Charsets.UTF_8)
-        val metadata = SourceReadableDocumentMetadata(
-            requestId = request.requestId,
-            title = sanitized.title,
+        val metadata = buildReadableMetadata(
+            request = request,
             sourceUrl = sourceUrl,
-            sourceVersion = request.version,
-            license = sanitized.sourceLicense,
-            sourceSha256 = sha256(rawBytes),
-            documentSha256 = sha256(bodyBytes),
-            sections = sanitized.sections,
-            warnings = sanitized.warnings,
-            assets = sanitized.assets,
+            rawBytes = rawBytes,
+            bodyBytes = bodyBytes,
+            sanitized = sanitized,
         )
         return SourceReadableDocumentPayload(metadata, bodyBytes)
     }
@@ -179,6 +175,7 @@ class ArxivService : PaperSourceService() {
                     (nodes.item(authorIndex) as Element).text("name")?.clean()?.takeIf(String::isNotBlank)
                 }
             }
+
             val subjects = entry.getElementsByTagNameNS(ATOM_NAMESPACE, "category").let { nodes ->
                 (0 until nodes.length).mapNotNullTo(linkedSetOf()) { categoryIndex ->
                     (nodes.item(categoryIndex) as Element).getAttribute("term").trim().takeIf(String::isNotBlank)
@@ -269,10 +266,6 @@ class ArxivService : PaperSourceService() {
 
     private fun String.normalizeDoi(): String? = trim().lowercase().takeIf(DOI::matches)
 
-    private fun sha256(bytes: ByteArray): String = java.security.MessageDigest.getInstance("SHA-256")
-        .digest(bytes)
-        .joinToString("") { "%02x".format(it) }
-
     private fun encode(value: String): String =
         URLEncoder.encode(value, StandardCharsets.UTF_8.name()).replace("+", "%20")
 
@@ -293,3 +286,27 @@ class ArxivService : PaperSourceService() {
         )
     }
 }
+
+internal fun buildReadableMetadata(
+    request: SourceGetReadableDocumentRequest,
+    sourceUrl: String,
+    rawBytes: ByteArray,
+    bodyBytes: ByteArray,
+    sanitized: SanitizedArxivReadableDocument,
+): SourceReadableDocumentMetadata = SourceReadableDocumentMetadata(
+    requestId = request.requestId,
+    title = sanitized.title,
+    contractVersion = ARXIV_READABLE_CONTRACT_VERSION,
+    sourceUrl = sourceUrl,
+    sourceVersion = request.version,
+    license = sanitized.sourceLicense,
+    sourceSha256 = sha256(rawBytes),
+    documentSha256 = sha256(bodyBytes),
+    sections = sanitized.sections,
+    warnings = sanitized.warnings,
+    assets = sanitized.assets,
+)
+
+private fun sha256(bytes: ByteArray): String = MessageDigest.getInstance("SHA-256")
+    .digest(bytes)
+    .joinToString("") { "%02x".format(it) }

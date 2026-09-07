@@ -10,6 +10,8 @@ import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 import org.jsoup.safety.Safelist
 
+internal const val ARXIV_READABLE_CONTRACT_VERSION = "arxiv-html-sanitizer-1"
+
 internal data class SanitizedArxivReadableDocument(
     val bodyHtml: String,
     val title: String,
@@ -185,7 +187,8 @@ internal class ArxivReadableDocumentSanitizer {
         val resolved = runCatching { sourceUri.resolve(rawUrl) }.getOrNull() ?: return null
         return resolved.toString().takeIf {
             resolved.scheme == "https" && resolved.host == "arxiv.org" && resolved.fragment == null &&
-                resolved.userInfo == null && it.length <= 2_048
+                resolved.userInfo == null && resolved.port == -1 && resolved.query == null &&
+                resolved.path.startsWith(sourceUri.path.trimEnd('/') + "/") && it.length <= 2_048
         }
     }
 
