@@ -31,13 +31,13 @@ jobs:
           repository: ImAno177/PaperReader
           path: PaperReader
           ref: ${{ vars.PAPERREADER_SDK_REF || 'main' }}
-      - uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6
         with:
           distribution: temurin
           java-version: "21"
-      - uses: android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699
+      - uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd
       - run: sdkmanager "platforms;android-36" "build-tools;36.1.0"
-      - uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb
+      - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6
       - name: Make Gradle wrapper executable
         run: chmod +x gradlew
       - name: Restore signing material
@@ -103,7 +103,7 @@ jobs:
             --signer-sha256 "$SIGNER" \
             --private-key "$RUNNER_TEMP/index-key.pem" \
             --output dist/index.signed.json
-      - uses: anchore/sbom-action/download-syft@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26
+      - uses: anchore/sbom-action/download-syft@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c
         with: { syft-version: v1.51.0 }
       - run: syft dir:. -o spdx-json=dist/paperreader-sources-${{ inputs.version_name }}.spdx.json
       - name: Publish release
