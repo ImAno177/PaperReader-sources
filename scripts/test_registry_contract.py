@@ -3,8 +3,12 @@
 
 from __future__ import annotations
 
+import base64
+import json
 import re
+import subprocess
 import sys
+import tempfile
 import unittest
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -13,6 +17,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 from build_registry import EXTENSION_API_VERSION, SOURCES, build_release_entry  # noqa: E402
+from check_release_version import (  # noqa: E402
+    require_increasing_version,
+    verify_signed_index,
+)
 
 
 ANDROID = "http://schemas.android.com/apk/res/android"
@@ -118,6 +126,31 @@ class RegistryContractTest(unittest.TestCase):
         common_build = (ROOT / "source-common/build.gradle.kts").read_text(encoding="utf-8")
         self.assertRegex(common_build, r'dev\.paperreader:extension-api:0\.2\.0\b')
 
+    def test_registry_identity_and_signing_key_match_the_pinned_host(self) -> None:
+        host_build = (self.sdk_root / "app/build.gradle.kts").read_text(encoding="utf-8")
+        host_store_id = re.search(
+            r'"OFFICIAL_SOURCE_STORE_ID",\s*BuildConfigField\(\s*"String",\s*"([^"]+)"',
+            host_build,
+        )
+        self.assertIsNotNone(host_store_id)
+        self.assertEqual("paperreader.official.sources", host_store_id.group(1))
+        host_index_url = re.search(
+            r'"OFFICIAL_SOURCE_STORE_URL",\s*BuildConfigField\(\s*"String",\s*"([^"]+)"',
+            host_build,
+        )
+        self.assertIsNotNone(host_index_url)
+        self.assertEqual(
+            "https://raw.githubusercontent.com/ImAno177/PaperReader-sources/main/registry/v2/index.signed.json",
+            host_index_url.group(1),
+        )
+        host_public_key = re.search(
+            r'"OFFICIAL_SOURCE_STORE_PUBLIC_KEY",\s*BuildConfigField\(\s*"String",\s*"([^"]+)"',
+            host_build,
+        )
+        self.assertIsNotNone(host_public_key)
+        registry_public_key = (ROOT / "registry/public-key-base64.txt").read_text(encoding="ascii").strip()
+        self.assertEqual(registry_public_key, host_public_key.group(1))
+
     def test_manifest_descriptors_and_registry_metadata_are_identical(self) -> None:
         self.assertEqual(2, EXTENSION_API_VERSION)
         self.assertEqual(4, len(SOURCES))
@@ -182,6 +215,175 @@ class RegistryContractTest(unittest.TestCase):
             self.assertEqual(registry["minimumRequestIntervalMillis"], interval, module)
             self.assertEqual(2, generated["minimumHostApi"], module)
             self.assertEqual(2, generated["maximumHostApi"], module)
+
+
+class ReleaseVersionPreflightTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.key_directory = tempfile.TemporaryDirectory(prefix="paperreader-release-test-key-")
+        key_directory = Path(cls.key_directory.name)
+        cls.private_key = key_directory / "private.pem"
+        cls.public_key = key_directory / "public.pem"
+        cls.public_key_base64 = key_directory / "public-key-base64.txt"
+        subprocess.run(
+            ["openssl", "genpkey", "-algorithm", "Ed25519", "-out", str(cls.private_key)],
+            check=True,
+            capture_output=True,
+        )
+        subprocess.run(
+            [
+                "openssl",
+                "pkey",
+                "-in",
+                str(cls.private_key),
+                "-pubout",
+                "-outform",
+                "DER",
+                "-out",
+                str(cls.public_key),
+            ],
+            check=True,
+            capture_output=True,
+        )
+        public_der = cls.public_key.read_bytes()
+        cls.public_key_base64.write_text(base64.b64encode(public_der[-32:]).decode("ascii") + "\n")
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        cls.key_directory.cleanup()
+
+    def signed_envelope(self, index: dict[str, object]) -> dict[str, str]:
+        payload = json.dumps(index, separators=(",", ":"), sort_keys=True).encode("utf-8")
+        with tempfile.TemporaryDirectory(prefix="paperreader-release-test-sign-") as directory:
+            temporary = Path(directory)
+            payload_path = temporary / "payload.json"
+            signature_path = temporary / "signature.bin"
+            payload_path.write_bytes(payload)
+            subprocess.run(
+                [
+                    "openssl",
+                    "pkeyutl",
+                    "-sign",
+                    "-rawin",
+                    "-inkey",
+                    str(self.private_key),
+                    "-in",
+                    str(payload_path),
+                    "-out",
+                    str(signature_path),
+                ],
+                check=True,
+                capture_output=True,
+            )
+            return {
+                "payload": base64.b64encode(payload).decode("ascii"),
+                "signature": base64.b64encode(signature_path.read_bytes()).decode("ascii"),
+            }
+
+    @staticmethod
+    def registry_index(sequence: int, version_codes: list[int]) -> dict[str, object]:
+        releases = []
+        for index, version_code in enumerate(version_codes):
+            releases.append(
+                {
+                    "kind": "source",
+                    "packageName": f"dev.paperreader.test.source{index}",
+                    "serviceClassName": f"dev.paperreader.test.source{index}.Service",
+                    "displayName": f"Source {index}",
+                    "providerId": f"source{index}",
+                    "minimumRequestIntervalMillis": 1000,
+                    "sourceCapabilities": ["search"],
+                    "sourceRoles": ["search_engine"],
+                    "sourceIdentifierTypes": [],
+                    "sourceSupportedSorts": ["relevance"],
+                    "versionCode": version_code,
+                    "minimumVersionCode": 1,
+                    "versionName": "1.0.0",
+                    "signerSha256": "ab" * 32,
+                    "minimumHostApi": 2,
+                    "maximumHostApi": 2,
+                    "installUrl": f"https://example.org/source{index}.apk",
+                    "apkSha256": "cd" * 32,
+                    "apkSizeBytes": 1,
+                    "license": "Apache-2.0",
+                    "themeIds": [],
+                },
+            )
+        return {
+            "schemaVersion": 1,
+            "storeId": "paperreader.official.sources",
+            "displayName": "PaperReader official sources",
+            "websiteUrl": "https://github.com/ImAno177/PaperReader-sources",
+            "sequence": sequence,
+            "generatedAt": "2026-01-01T00:00:00Z",
+            "extensions": releases,
+        }
+
+    def write_envelope(self, path: Path, envelope: dict[str, str]) -> None:
+        path.write_text(json.dumps(envelope, separators=(",", ":")), encoding="utf-8")
+
+    def test_tracked_official_catalogs_have_valid_signatures_and_schema(self) -> None:
+        paths = [ROOT / "registry/index.signed.json", ROOT / "registry/v2/index.signed.json"]
+        existing = [path for path in paths if path.exists()]
+        self.assertTrue(existing)
+        for path in existing:
+            versions = verify_signed_index(path, ROOT / "registry/public-key-base64.txt")
+            self.assertTrue(versions)
+
+    def test_tampered_payload_and_signature_fail_real_ed25519_verification(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="paperreader-release-test-envelope-") as directory:
+            envelope_path = Path(directory) / "index.signed.json"
+            valid = self.signed_envelope(self.registry_index(5, [5]))
+            self.write_envelope(envelope_path, valid)
+            self.assertEqual([5, 5], verify_signed_index(envelope_path, self.public_key_base64))
+
+            tampered_payload = dict(valid)
+            payload = json.loads(base64.b64decode(tampered_payload["payload"]))
+            payload["sequence"] = 6
+            tampered_payload["payload"] = base64.b64encode(
+                json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8"),
+            ).decode("ascii")
+            self.write_envelope(envelope_path, tampered_payload)
+            with self.assertRaisesRegex(ValueError, "signature verification failed"):
+                verify_signed_index(envelope_path, self.public_key_base64)
+
+            tampered_signature = dict(valid)
+            signature = bytearray(base64.b64decode(tampered_signature["signature"]))
+            signature[0] ^= 1
+            tampered_signature["signature"] = base64.b64encode(signature).decode("ascii")
+            self.write_envelope(envelope_path, tampered_signature)
+            with self.assertRaisesRegex(ValueError, "signature verification failed"):
+                verify_signed_index(envelope_path, self.public_key_base64)
+
+    def test_valid_signature_does_not_allow_an_unknown_catalog_schema(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="paperreader-release-test-schema-") as directory:
+            envelope_path = Path(directory) / "index.signed.json"
+            index = self.registry_index(5, [5])
+            index["unexpected"] = "field"
+            self.write_envelope(envelope_path, self.signed_envelope(index))
+            with self.assertRaisesRegex(ValueError, "unexpected schema"):
+                verify_signed_index(envelope_path, self.public_key_base64)
+
+    def test_equal_and_lower_release_versions_are_rejected_against_verified_catalogs(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="paperreader-release-test-repo-") as directory:
+            root = Path(directory)
+            registry = root / "registry"
+            (registry / "v2").mkdir(parents=True)
+            (registry / "public-key-base64.txt").write_bytes(self.public_key_base64.read_bytes())
+            self.write_envelope(
+                registry / "index.signed.json",
+                self.signed_envelope(self.registry_index(40, [41])),
+            )
+            self.write_envelope(
+                registry / "v2/index.signed.json",
+                self.signed_envelope(self.registry_index(50, [52])),
+            )
+
+            self.assertEqual(52, require_increasing_version(53, root))
+            with self.assertRaisesRegex(ValueError, "must exceed"):
+                require_increasing_version(52, root)
+            with self.assertRaisesRegex(ValueError, "must exceed"):
+                require_increasing_version(51, root)
 
 
 if __name__ == "__main__":

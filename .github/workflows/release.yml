@@ -53,9 +53,6 @@ jobs:
           python3 - <<'PY'
           import os
           import re
-          import base64
-          import json
-          from pathlib import Path
 
           if os.environ["GITHUB_REF"] != "refs/heads/main":
               raise SystemExit("Releases must be dispatched from main")
@@ -79,16 +76,8 @@ jobs:
               raise SystemExit("paperreader_sdk_ref must be a full lowercase commit SHA")
           if re.fullmatch(r"v" + semantic_version, os.environ["HOST_RELEASE_TAG"]) is None:
               raise SystemExit("host_release_tag must be v followed by a semantic version")
-          sequences = []
-          for path in (Path("registry/index.signed.json"), Path("registry/v2/index.signed.json")):
-              if path.exists():
-                  envelope = json.loads(path.read_text(encoding="utf-8"))
-                  index = json.loads(base64.b64decode(envelope["payload"], validate=True))
-                  sequences.append(index["sequence"])
-                  sequences.extend(entry["versionCode"] for entry in index["extensions"])
-          if sequences and int(os.environ["VERSION_CODE"]) <= max(sequences):
-              raise SystemExit("version_code must exceed all published source and store versions")
           PY
+          python3 scripts/check_release_version.py "$VERSION_CODE"
 
       - name: Require successful source and host CI for exact commits
         env:
