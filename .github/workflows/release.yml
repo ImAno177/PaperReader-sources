@@ -11,36 +11,246 @@ on:
         description: Monotonically increasing Android/store version code
         required: true
         type: number
+      paperreader_sdk_ref:
+        description: Exact PaperReader SDK commit used by the host release
+        required: true
+        type: string
+      host_release_tag:
+        description: Existing PaperReader host release tag containing app-release.apk
+        required: true
+        type: string
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: source-release
   cancel-in-progress: false
 
 jobs:
+  compatibility:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      host_signer_sha256: ${{ steps.signer_check.outputs.host_signer_sha256 }}
+    env:
+      VERSION_NAME: ${{ inputs.version_name }}
+      VERSION_CODE: ${{ inputs.version_code }}
+      PAPERREADER_SDK_REF: ${{ inputs.paperreader_sdk_ref }}
+      HOST_RELEASE_TAG: ${{ inputs.host_release_tag }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+
+      - name: Validate release inputs and main branch
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import os
+          import re
+
+          if os.environ["GITHUB_REF"] != "refs/heads/main":
+              raise SystemExit("Releases must be dispatched from main")
+          version = os.environ["VERSION_NAME"]
+          semantic_version = (
+              r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)"
+              r"(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?"
+              r"(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?"
+          )
+          match = re.fullmatch(semantic_version, version)
+          if match is None or any(
+              part.isdigit() and len(part) > 1 and part.startswith("0")
+              for part in (match.group(4) or "").split(".")
+          ):
+              raise SystemExit("version_name must be a valid semantic version without v")
+          if re.fullmatch(r"[1-9][0-9]*", os.environ["VERSION_CODE"]) is None:
+              raise SystemExit("version_code must be a positive integer")
+          if int(os.environ["VERSION_CODE"]) > 2_100_000_000:
+              raise SystemExit("version_code exceeds Android's supported range")
+          if re.fullmatch(r"[0-9a-f]{40}", os.environ["PAPERREADER_SDK_REF"]) is None:
+              raise SystemExit("paperreader_sdk_ref must be a full lowercase commit SHA")
+          if re.fullmatch(r"v" + semantic_version, os.environ["HOST_RELEASE_TAG"]) is None:
+              raise SystemExit("host_release_tag must be v followed by a semantic version")
+          PY
+
+      - name: Require successful source and host CI for exact commits
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! gh run list \
+            --repo "$GITHUB_REPOSITORY" \
+            --workflow android-ci.yml \
+            --branch main \
+            --event push \
+            --commit "$GITHUB_SHA" \
+            --status success \
+            --json headSha \
+            --jq 'length > 0' | grep -qx true; then
+            echo "Source main CI has no successful push run for $GITHUB_SHA" >&2
+            exit 1
+          fi
+          if ! gh run list \
+            --repo ImAno177/PaperReader \
+            --workflow android-ci.yml \
+            --branch main \
+            --event push \
+            --commit "$PAPERREADER_SDK_REF" \
+            --status success \
+            --json headSha \
+            --jq 'length > 0' | grep -qx true; then
+            echo "Host main CI has no successful push run for $PAPERREADER_SDK_REF" >&2
+            exit 1
+          fi
+
+      - name: Check out the exact host SDK commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ImAno177/PaperReader
+          path: PaperReader
+          ref: ${{ inputs.paperreader_sdk_ref }}
+
+      - name: Verify checked-out SDK commit
+        run: test "$(git -C PaperReader rev-parse HEAD)" = "$PAPERREADER_SDK_REF"
+
+      - name: Require exact host release commit and successful release workflow
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          host_commit=$(gh api "repos/ImAno177/PaperReader/commits/$HOST_RELEASE_TAG" --jq .sha)
+          if [ "$host_commit" != "$PAPERREADER_SDK_REF" ]; then
+            echo "Host release tag does not resolve to the requested SDK commit" >&2
+            exit 1
+          fi
+          if ! gh run list \
+            --repo ImAno177/PaperReader \
+            --workflow release.yml \
+            --branch main \
+            --event workflow_dispatch \
+            --commit "$PAPERREADER_SDK_REF" \
+            --status success \
+            --json headSha \
+            --jq 'length > 0' | grep -qx true; then
+            echo "Host release workflow has no successful run for $PAPERREADER_SDK_REF" >&2
+            exit 1
+          fi
+          mkdir -p "$RUNNER_TEMP/host-release"
+          gh release download "$HOST_RELEASE_TAG" \
+            --repo ImAno177/PaperReader \
+            --pattern app-release.apk \
+            --dir "$RUNNER_TEMP/host-release" \
+            --clobber
+          test -s "$RUNNER_TEMP/host-release/app-release.apk"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@035682743ab223ec9c6169af09811dff8247e520
+      - name: Install host-catalog Build-Tools
+        run: |
+          set +o pipefail
+          yes | sdkmanager --licenses >/dev/null
+          set -o pipefail
+          python3 - <<'PY'
+          import os
+          import subprocess
+          import tomllib
+
+          with open("PaperReader/gradle/libs.versions.toml", "rb") as catalog:
+              version = tomllib.load(catalog)["versions"]["buildTools"]
+          with open(os.environ["GITHUB_ENV"], "a") as output:
+              print(f"BUILD_TOOLS_VERSION={version}", file=output)
+          subprocess.run(["sdkmanager", f"build-tools;{version}"], check=True)
+          PY
+
+      - name: Compare signed host APK certificate
+        id: signer_check
+        env:
+          EXPECTED_HOST_SIGNER: ${{ secrets.PAPERREADER_HOST_SIGNER_SHA256 }}
+          HOST_APK: ${{ runner.temp }}/host-release/app-release.apk
+        run: |
+          python3 - <<'PY'
+          import os
+          import re
+          import subprocess
+          from pathlib import Path
+
+          expected = re.sub(r"[^0-9a-fA-F]", "", os.environ["EXPECTED_HOST_SIGNER"]).lower()
+          if re.fullmatch(r"[0-9a-f]{64}", expected) is None:
+              raise SystemExit("Configured host signer fingerprint is invalid")
+          apksigner = Path(os.environ["ANDROID_HOME"]) / "build-tools" / os.environ["BUILD_TOOLS_VERSION"] / "apksigner"
+          result = subprocess.run(
+              [str(apksigner), "verify", "--verbose", "--print-certs", os.environ["HOST_APK"]],
+              check=True,
+              capture_output=True,
+              text=True,
+          )
+          match = re.search(r"Signer #1 certificate SHA-256 digest: ([0-9a-fA-F:]+)", result.stdout)
+          if match is None:
+              raise SystemExit("Signed host APK has no readable SHA-256 signer certificate")
+          actual = re.sub(r"[^0-9a-fA-F]", "", match.group(1)).lower()
+          if actual != expected:
+              raise SystemExit("Signed host APK certificate does not match the configured host signer")
+          with open(os.environ["GITHUB_OUTPUT"], "a") as output:
+              print(f"host_signer_sha256={actual}", file=output)
+          PY
+
+      - name: Verify source registry and descriptor parity
+        run: python3 scripts/test_registry_contract.py PaperReader
+
   release:
+    if: github.ref == 'refs/heads/main'
+    needs: compatibility
     runs-on: ubuntu-24.04
     timeout-minutes: 45
+    permissions:
+      contents: write
+    env:
+      VERSION_NAME: ${{ inputs.version_name }}
+      VERSION_CODE: ${{ inputs.version_code }}
+      PAPERREADER_SDK_REF: ${{ inputs.paperreader_sdk_ref }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with: { fetch-depth: 0 }
+        with:
+          fetch-depth: 0
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           repository: ImAno177/PaperReader
           path: PaperReader
-          ref: ${{ vars.PAPERREADER_SDK_REF || 'main' }}
+          ref: ${{ inputs.paperreader_sdk_ref }}
+      - name: Verify checked-out SDK commit
+        run: test "$(git -C PaperReader rev-parse HEAD)" = "$PAPERREADER_SDK_REF"
       - uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c
         with:
           distribution: temurin
           java-version: "21"
-      - uses: android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699
-      - run: sdkmanager "platforms;android-36" "build-tools;36.1.0"
+      - uses: android-actions/setup-android@035682743ab223ec9c6169af09811dff8247e520
+      - name: Install host-catalog Android SDK packages
+        run: |
+          set +o pipefail
+          yes | sdkmanager --licenses >/dev/null
+          set -o pipefail
+          python3 - <<'PY'
+          import os
+          import subprocess
+          import tomllib
+
+          with open("PaperReader/gradle/libs.versions.toml", "rb") as catalog:
+              versions = tomllib.load(catalog)["versions"]
+          with open(os.environ["GITHUB_ENV"], "a") as output:
+              print(f"BUILD_TOOLS_VERSION={versions['buildTools']}", file=output)
+          subprocess.run([
+              "sdkmanager",
+              f"platforms;android-{versions['compileSdk']}.0",
+              f"build-tools;{versions['buildTools']}",
+          ], check=True)
+          PY
       - uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb
       - name: Make Gradle wrapper executable
         run: chmod +x gradlew
-      - name: Restore signing material
+      - name: Restore source signing material
         env:
           KEYSTORE_BASE64: ${{ secrets.EXTENSION_KEYSTORE_BASE64 }}
           INDEX_KEY_BASE64: ${{ secrets.REGISTRY_ED25519_PRIVATE_KEY_BASE64 }}
@@ -48,25 +258,17 @@ jobs:
           printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/extensions.jks"
           printf '%s' "$INDEX_KEY_BASE64" | base64 --decode > "$RUNNER_TEMP/index-key.pem"
           chmod 600 "$RUNNER_TEMP/extensions.jks" "$RUNNER_TEMP/index-key.pem"
-      - name: Build signed release APKs
+      - name: Build signed source APKs
         env:
-          STORE_PASSWORD: ${{ secrets.EXTENSION_KEYSTORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.EXTENSION_KEY_ALIAS }}
-          KEY_PASSWORD: ${{ secrets.EXTENSION_KEY_PASSWORD }}
-          HOST_SIGNER: ${{ secrets.PAPERREADER_HOST_SIGNER_SHA256 }}
-        run: >-
-          ./gradlew
-          -PpaperReaderSdkPath=PaperReader
-          -PreleaseVersion=${{ inputs.version_name }}
-          -PreleaseVersionCode=${{ inputs.version_code }}
-          -PpaperReaderHostSignerSha256="$HOST_SIGNER"
-          -PextensionKeystorePath="$RUNNER_TEMP/extensions.jks"
-          -PextensionKeystorePassword="$STORE_PASSWORD"
-          -PextensionKeyAlias="$KEY_ALIAS"
-          -PextensionKeyPassword="$KEY_PASSWORD"
-          testDebugUnitTest lintRelease assembleRelease
-          --stacktrace
-      - name: Build signed store index
+          ORG_GRADLE_PROJECT_releaseVersion: ${{ inputs.version_name }}
+          ORG_GRADLE_PROJECT_releaseVersionCode: ${{ inputs.version_code }}
+          ORG_GRADLE_PROJECT_paperReaderHostSignerSha256: ${{ needs.compatibility.outputs.host_signer_sha256 }}
+          ORG_GRADLE_PROJECT_extensionKeystorePath: ${{ runner.temp }}/extensions.jks
+          ORG_GRADLE_PROJECT_extensionKeystorePassword: ${{ secrets.EXTENSION_KEYSTORE_PASSWORD }}
+          ORG_GRADLE_PROJECT_extensionKeyAlias: ${{ secrets.EXTENSION_KEY_ALIAS }}
+          ORG_GRADLE_PROJECT_extensionKeyPassword: ${{ secrets.EXTENSION_KEY_PASSWORD }}
+        run: ./gradlew testDebugUnitTest lintRelease assembleRelease --stacktrace
+      - name: Build v2 signed store index
         run: |
           mkdir -p dist
           declare -A PACKAGES=(
@@ -85,47 +287,57 @@ jobs:
           for module in source-semanticscholar source-crossref source-arxiv source-europepmc; do
             cp "$module/build/outputs/apk/release/$module-release.apk" "dist/$module.apk"
             APK="dist/$module.apk"
-            "$ANDROID_HOME/build-tools/36.1.0/apksigner" verify --verbose --print-certs "$APK"
-            APK_SIGNER=$("$ANDROID_HOME/build-tools/36.1.0/apksigner" verify --print-certs "$APK" | sed -n 's/^Signer #1 certificate SHA-256 digest: //p')
+            "$ANDROID_HOME/build-tools/$BUILD_TOOLS_VERSION/apksigner" verify --verbose --print-certs "$APK"
+            APK_SIGNER=$("$ANDROID_HOME/build-tools/$BUILD_TOOLS_VERSION/apksigner" verify --print-certs "$APK" | sed -n 's/^Signer #1 certificate SHA-256 digest: //p')
             test ${#APK_SIGNER} -eq 64
             if [ -z "$SIGNER" ]; then SIGNER="$APK_SIGNER"; else test "$APK_SIGNER" = "$SIGNER"; fi
-            BADGING=$("$ANDROID_HOME/build-tools/36.1.0/aapt" dump badging "$APK")
+            BADGING=$("$ANDROID_HOME/build-tools/$BUILD_TOOLS_VERSION/aapt" dump badging "$APK")
             printf '%s\n' "$BADGING" | grep -Fq "package: name='${PACKAGES[$module]}'"
-            MANIFEST=$("$ANDROID_HOME/build-tools/36.1.0/aapt" dump xmltree "$APK" AndroidManifest.xml)
+            MANIFEST=$("$ANDROID_HOME/build-tools/$BUILD_TOOLS_VERSION/aapt" dump xmltree "$APK" AndroidManifest.xml)
             printf '%s\n' "$MANIFEST" | grep -Fq "${SERVICES[$module]}"
             printf '%s\n' "$MANIFEST" | grep -Fq "dev.paperreader.extensions.api.action.PAPER_SOURCE"
           done
           python3 scripts/build_registry.py \
             --root . \
-            --version-name "${{ inputs.version_name }}" \
-            --version-code "${{ inputs.version_code }}" \
-            --release-tag "v${{ inputs.version_name }}" \
+            --version-name "$VERSION_NAME" \
+            --version-code "$VERSION_CODE" \
+            --release-tag "v$VERSION_NAME" \
             --signer-sha256 "$SIGNER" \
             --private-key "$RUNNER_TEMP/index-key.pem" \
             --output dist/index.signed.json
       - uses: anchore/sbom-action/download-syft@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26
         with: { syft-version: v1.51.0 }
-      - run: syft dir:. -o spdx-json=dist/paperreader-sources-${{ inputs.version_name }}.spdx.json
-      - name: Publish release
+      - name: Generate source SBOM
+        env:
+          SOURCE_VERSION: ${{ inputs.version_name }}
+        run: syft dir:. -o spdx-json=dist/paperreader-sources-$SOURCE_VERSION.spdx.json
+      - name: Publish source release assets
         env:
           GH_TOKEN: ${{ github.token }}
-        run: >-
-          gh release create "v${{ inputs.version_name }}"
-          dist/source-semanticscholar.apk
-          dist/source-crossref.apk
-          dist/source-arxiv.apk
-          dist/source-europepmc.apk
-          dist/index.signed.json
-          dist/paperreader-sources-${{ inputs.version_name }}.spdx.json
-          --title "PaperReader sources v${{ inputs.version_name }}"
-          --generate-notes
-          --target main
-      - name: Publish latest signed index
         run: |
-          git checkout main
-          cp dist/index.signed.json registry/index.signed.json
+          gh release create "v$VERSION_NAME" \
+            dist/source-semanticscholar.apk \
+            dist/source-crossref.apk \
+            dist/source-arxiv.apk \
+            dist/source-europepmc.apk \
+            dist/index.signed.json \
+            "dist/paperreader-sources-$VERSION_NAME.spdx.json" \
+            --title "PaperReader sources v$VERSION_NAME" \
+            --generate-notes \
+            --target "$GITHUB_SHA"
+      - name: Publish v2 signed index while preserving the API 1 index
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git fetch origin main
+          git checkout --detach origin/main
+          mkdir -p registry/v2
+          cp dist/index.signed.json registry/v2/index.signed.json
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add registry/index.signed.json
-          git commit -m "chore(registry): publish v${{ inputs.version_name }}"
-          git push origin main
+          git add -- registry/v2/index.signed.json
+          git commit -m "chore(registry): publish API 2 index v$VERSION_NAME"
+          git push origin HEAD:main
+      - name: Remove signing material
+        if: always()
+        run: rm -f -- "$RUNNER_TEMP/extensions.jks" "$RUNNER_TEMP/index-key.pem"

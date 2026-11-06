@@ -5,6 +5,11 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+    inputs:
+      paperreader_sdk_ref:
+        description: Immutable 40-character PaperReader SDK commit (defaults to repository variable)
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -19,19 +24,47 @@ jobs:
       contents: write
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    env:
+      PAPERREADER_SDK_REF: ${{ github.event.inputs.paperreader_sdk_ref || vars.PAPERREADER_SDK_REF }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Require immutable SDK commit
+        run: |
+          python3 - <<'PY'
+          import os
+          import re
+          if re.fullmatch(r"[0-9a-f]{40}", os.environ.get("PAPERREADER_SDK_REF", "")) is None:
+              raise SystemExit("PAPERREADER_SDK_REF must be a full lowercase commit SHA")
+          PY
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        name: Check out the pinned PaperReader SDK
         with:
           repository: ImAno177/PaperReader
           path: PaperReader
-          ref: ${{ vars.PAPERREADER_SDK_REF || 'main' }}
+          ref: ${{ env.PAPERREADER_SDK_REF }}
+      - name: Verify checked-out SDK commit
+        run: test "$(git -C PaperReader rev-parse HEAD)" = "$PAPERREADER_SDK_REF"
       - uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c
         with:
           distribution: temurin
           java-version: "21"
-      - uses: android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699
-      - run: sdkmanager "platforms;android-36" "build-tools;36.1.0"
+      - uses: android-actions/setup-android@035682743ab223ec9c6169af09811dff8247e520
+      - name: Install host-catalog Android SDK packages
+        run: |
+          set +o pipefail
+          yes | sdkmanager --licenses >/dev/null
+          set -o pipefail
+          python3 - <<'PY'
+          import tomllib
+          import subprocess
+          with open("PaperReader/gradle/libs.versions.toml", "rb") as catalog:
+              versions = tomllib.load(catalog)["versions"]
+          subprocess.run([
+              "sdkmanager",
+              f"platforms;android-{versions['compileSdk']}.0",
+              f"build-tools;{versions['buildTools']}",
+          ], check=True)
+          PY
       - uses: gradle/actions/dependency-submission@9c971963bec38e04b3d30dcc455b5382be2fdbfb
         with:
           additional-arguments: -PpaperReaderSdkPath=PaperReader --no-configuration-cache
@@ -63,20 +96,49 @@ jobs:
   quality:
     runs-on: ubuntu-24.04
     timeout-minutes: 40
+    env:
+      PAPERREADER_SDK_REF: ${{ github.event.inputs.paperreader_sdk_ref || vars.PAPERREADER_SDK_REF }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Require immutable SDK commit
+        run: |
+          python3 - <<'PY'
+          import os
+          import re
+          if re.fullmatch(r"[0-9a-f]{40}", os.environ.get("PAPERREADER_SDK_REF", "")) is None:
+              raise SystemExit("PAPERREADER_SDK_REF must be a full lowercase commit SHA")
+          PY
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        name: Check out the pinned PaperReader SDK
         with:
           repository: ImAno177/PaperReader
           path: PaperReader
-          ref: ${{ vars.PAPERREADER_SDK_REF || 'main' }}
+          ref: ${{ env.PAPERREADER_SDK_REF }}
+      - name: Verify checked-out SDK commit
+        run: test "$(git -C PaperReader rev-parse HEAD)" = "$PAPERREADER_SDK_REF"
       - uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c
         with:
           distribution: temurin
           java-version: "21"
-      - uses: android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699
-      - name: Install Android SDK
-        run: sdkmanager "platforms;android-36" "build-tools;36.1.0"
+      - uses: android-actions/setup-android@035682743ab223ec9c6169af09811dff8247e520
+      - name: Install host-catalog Android SDK packages
+        run: |
+          set +o pipefail
+          yes | sdkmanager --licenses >/dev/null
+          set -o pipefail
+          python3 - <<'PY'
+          import tomllib
+          import subprocess
+          with open("PaperReader/gradle/libs.versions.toml", "rb") as catalog:
+              versions = tomllib.load(catalog)["versions"]
+          subprocess.run([
+              "sdkmanager",
+              f"platforms;android-{versions['compileSdk']}.0",
+              f"build-tools;{versions['buildTools']}",
+          ], check=True)
+          PY
+      - name: Verify source descriptor and registry metadata parity
+        run: python3 scripts/test_registry_contract.py PaperReader
       - uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb
       - name: Make Gradle wrapper executable
         run: chmod +x gradlew

@@ -40,7 +40,7 @@ same-document assets on a separate lane.
 | Area | Technology |
 | --- | --- |
 | Android | Kotlin, min SDK 28, target SDK 36, Android SDK Platform 37 |
-| Contract | `dev.paperreader:extension-api:0.1.0` over versioned AIDL |
+| Contract | `dev.paperreader:extension-api:0.2.0` over API 2 versioned AIDL |
 | Shared transport | Bounded HTTP, rate gating, cancellation, and caller verification |
 | Build | Gradle wrapper, Java and Kotlin target 17, JDK 21 in CI |
 | Release | Signed APKs, Ed25519 registry, SHA-256 and exact byte-size checks |
@@ -95,6 +95,11 @@ Each provider APK is written under that provider module's `build/outputs/apk/` d
 repository's CI and release workflows use the same local build contract, but live provider calls are
 not deterministic tests.
 
+CI checks out the host SDK from the immutable `PAPERREADER_SDK_REF` repository variable. Manual CI
+runs may supply a different full commit SHA. Source releases require the matching host SDK commit and
+host release tag, successful CI for both exact commits, and a host APK whose certificate matches the
+configured signer pin.
+
 The local host demo enables the arXiv readable-document capability with
 `paperReaderDevSourceCapabilities=search,details,pdf_link,readable_document` and must use the same
 debug signer digest for the host and source APK. The signed registry remains the release source of
@@ -119,9 +124,10 @@ arbitrary figure-count limit is used.
 
 ## Release and registry
 
-The `registry/index.signed.json` file contains the signed release catalog. The envelope signs the exact
-UTF-8 index bytes with Ed25519. Each installable entry binds the package, version code, host API range,
-extension kind, APK URL, SHA-256, byte size, signer certificate, and provider capabilities.
+New API 2 source releases publish the signed catalog at `registry/v2/index.signed.json`. The existing
+`registry/index.signed.json` remains the API 1 catalog for older PaperReader hosts. Each envelope signs
+the exact UTF-8 index bytes with Ed25519. Each installable entry binds the package, version code, host
+API range, extension kind, APK URL, SHA-256, byte size, signer certificate, and provider capabilities.
 
 Release APKs are signed only by GitHub Actions. Private APK and registry signing keys are never stored
 in this repository. The registry tooling and the tracked public key are in [`scripts/`](scripts/) and
