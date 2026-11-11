@@ -44,7 +44,7 @@ jobs:
           ref: ${{ env.PAPERREADER_SDK_REF }}
       - name: Verify checked-out SDK commit
         run: test "$(git -C PaperReader rev-parse HEAD)" = "$PAPERREADER_SDK_REF"
-      - uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c
+      - uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78
         with:
           distribution: temurin
           java-version: "21"
@@ -65,7 +65,7 @@ jobs:
               f"build-tools;{versions['buildTools']}",
           ], check=True)
           PY
-      - uses: gradle/actions/dependency-submission@9c971963bec38e04b3d30dcc455b5382be2fdbfb
+      - uses: gradle/actions/dependency-submission@8da46b539cd8fe6ab27ca75128919a18d757604c
         with:
           additional-arguments: -PpaperReaderSdkPath=PaperReader --no-configuration-cache
           cache-provider: basic
@@ -116,7 +116,7 @@ jobs:
           ref: ${{ env.PAPERREADER_SDK_REF }}
       - name: Verify checked-out SDK commit
         run: test "$(git -C PaperReader rev-parse HEAD)" = "$PAPERREADER_SDK_REF"
-      - uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c
+      - uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78
         with:
           distribution: temurin
           java-version: "21"
@@ -139,7 +139,7 @@ jobs:
           PY
       - name: Verify source descriptor and registry metadata parity
         run: python3 scripts/test_registry_contract.py PaperReader
-      - uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb
+      - uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c
       - name: Make Gradle wrapper executable
         run: chmod +x gradlew
       - name: Test, lint, and assemble
@@ -148,14 +148,14 @@ jobs:
           -PpaperReaderSdkPath=PaperReader
           testDebugUnitTest lintDebug assembleDebug
           --stacktrace
-      - uses: anchore/sbom-action@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26
+      - uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c
         with:
           path: .
           format: spdx-json
           output-file: paperreader-sources-${{ github.sha }}.spdx.json
           artifact-name: paperreader-sources-sbom-${{ github.sha }}
           syft-version: v1.51.0
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: source-apks-${{ github.sha }}
           path: source-*/build/outputs/apk/debug/*.apk

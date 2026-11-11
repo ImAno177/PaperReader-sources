@@ -237,7 +237,7 @@ jobs:
           ref: ${{ inputs.paperreader_sdk_ref }}
       - name: Verify checked-out SDK commit
         run: test "$(git -C PaperReader rev-parse HEAD)" = "$PAPERREADER_SDK_REF"
-      - uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c
+      - uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78
         with:
           distribution: temurin
           java-version: "21"
@@ -262,7 +262,7 @@ jobs:
               f"build-tools;{versions['buildTools']}",
           ], check=True)
           PY
-      - uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb
+      - uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c
       - name: Make Gradle wrapper executable
         run: chmod +x gradlew
       - name: Restore source signing material
@@ -333,7 +333,7 @@ jobs:
             --signer-sha256 "$SIGNER" \
             --private-key "$RUNNER_TEMP/index-key.pem" \
             --output dist/index.signed.json
-      - uses: anchore/sbom-action/download-syft@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26
+      - uses: anchore/sbom-action/download-syft@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c
         with: { syft-version: v1.51.0 }
       - name: Generate source SBOM
         env:
