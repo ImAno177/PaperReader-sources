@@ -14,6 +14,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 
+EXTENSION_API_VERSION = 2
+
+
 SOURCES = (
     {
         "module": "source-semanticscholar",
@@ -46,7 +49,7 @@ SOURCES = (
         "displayName": "arXiv",
         "providerId": "arxiv",
         "minimumRequestIntervalMillis": 3000,
-        "sourceCapabilities": ["search", "details", "pdf_link"],
+        "sourceCapabilities": ["search", "details", "pdf_link", "readable_document"],
         "sourceRoles": ["content_source"],
         "sourceIdentifierTypes": ["arxiv"],
         "sourceSupportedSorts": ["relevance", "newest", "oldest"],
@@ -78,6 +81,35 @@ def arguments() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def build_release_entry(
+    source: dict[str, object],
+    *,
+    version_name: str,
+    version_code: int,
+    release_tag: str,
+    signer_sha256: str,
+    apk_data: bytes,
+) -> dict[str, object]:
+    return {
+        "kind": "source",
+        **{key: value for key, value in source.items() if key != "module"},
+        "versionCode": version_code,
+        "minimumVersionCode": 1,
+        "versionName": version_name,
+        "signerSha256": signer_sha256.lower(),
+        "minimumHostApi": EXTENSION_API_VERSION,
+        "maximumHostApi": EXTENSION_API_VERSION,
+        "installUrl": (
+            "https://github.com/ImAno177/PaperReader-sources/releases/download/"
+            f"{release_tag}/{source['module']}.apk"
+        ),
+        "apkSha256": hashlib.sha256(apk_data).hexdigest(),
+        "apkSizeBytes": len(apk_data),
+        "license": "Apache-2.0",
+        "themeIds": [],
+    }
+
+
 def main() -> None:
     args = arguments()
     if args.version_code < 1 or re.fullmatch(r"[0-9a-fA-F]{64}", args.signer_sha256) is None:
@@ -87,24 +119,14 @@ def main() -> None:
         apk = args.root / source["module"] / "build/outputs/apk/release" / f'{source["module"]}-release.apk'
         data = apk.read_bytes()
         releases.append(
-            {
-                "kind": "source",
-                **{key: value for key, value in source.items() if key != "module"},
-                "versionCode": args.version_code,
-                "minimumVersionCode": 1,
-                "versionName": args.version_name,
-                "signerSha256": args.signer_sha256.lower(),
-                "minimumHostApi": 1,
-                "maximumHostApi": 1,
-                "installUrl": (
-                    "https://github.com/ImAno177/PaperReader-sources/releases/download/"
-                    f'{args.release_tag}/{source["module"]}.apk'
-                ),
-                "apkSha256": hashlib.sha256(data).hexdigest(),
-                "apkSizeBytes": len(data),
-                "license": "Apache-2.0",
-                "themeIds": [],
-            }
+            build_release_entry(
+                source,
+                version_name=args.version_name,
+                version_code=args.version_code,
+                release_tag=args.release_tag,
+                signer_sha256=args.signer_sha256,
+                apk_data=data,
+            )
         )
     index = {
         "schemaVersion": 1,
