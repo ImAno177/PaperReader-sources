@@ -34,8 +34,6 @@ jobs:
     permissions:
       actions: read
       contents: read
-    outputs:
-      host_signer_sha256: ${{ steps.signer_check.outputs.host_signer_sha256 }}
     env:
       VERSION_NAME: ${{ inputs.version_name }}
       VERSION_CODE: ${{ inputs.version_code }}
@@ -167,7 +165,6 @@ jobs:
           PY
 
       - name: Compare signed host APK certificate
-        id: signer_check
         env:
           EXPECTED_HOST_SIGNER: ${{ secrets.PAPERREADER_HOST_SIGNER_SHA256 }}
           HOST_APK: ${{ runner.temp }}/host-release/app-release.apk
@@ -194,8 +191,6 @@ jobs:
           actual = re.sub(r"[^0-9a-fA-F]", "", match.group(1)).lower()
           if actual != expected:
               raise SystemExit("Signed host APK certificate does not match the configured host signer")
-          with open(os.environ["GITHUB_OUTPUT"], "a") as output:
-              print(f"host_signer_sha256={actual}", file=output)
           PY
 
       - name: Verify source registry and descriptor parity
@@ -263,12 +258,25 @@ jobs:
         env:
           ORG_GRADLE_PROJECT_releaseVersion: ${{ inputs.version_name }}
           ORG_GRADLE_PROJECT_releaseVersionCode: ${{ inputs.version_code }}
-          ORG_GRADLE_PROJECT_paperReaderHostSignerSha256: ${{ needs.compatibility.outputs.host_signer_sha256 }}
+          EXPECTED_HOST_SIGNER: ${{ secrets.PAPERREADER_HOST_SIGNER_SHA256 }}
           ORG_GRADLE_PROJECT_extensionKeystorePath: ${{ runner.temp }}/extensions.jks
           ORG_GRADLE_PROJECT_extensionKeystorePassword: ${{ secrets.EXTENSION_KEYSTORE_PASSWORD }}
           ORG_GRADLE_PROJECT_extensionKeyAlias: ${{ secrets.EXTENSION_KEY_ALIAS }}
           ORG_GRADLE_PROJECT_extensionKeyPassword: ${{ secrets.EXTENSION_KEY_PASSWORD }}
-        run: ./gradlew testDebugUnitTest lintRelease assembleRelease --stacktrace
+        run: |
+          python3 - <<'PY'
+          import os
+          import re
+          import subprocess
+
+          signer = re.sub(r"[^0-9a-fA-F]", "", os.environ["EXPECTED_HOST_SIGNER"]).lower()
+          if re.fullmatch(r"[0-9a-f]{64}", signer) is None:
+              raise SystemExit("Configured host signer fingerprint is invalid")
+          os.environ["ORG_GRADLE_PROJECT_paperReaderHostSignerSha256"] = signer
+          subprocess.run([
+              "./gradlew", "testDebugUnitTest", "lintRelease", "assembleRelease", "--stacktrace",
+          ], check=True)
+          PY
       - name: Build v2 signed store index
         run: |
           mkdir -p dist
