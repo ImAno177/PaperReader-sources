@@ -102,7 +102,7 @@ jobs:
             source_ci_green "$verified" && break
             parent="$(git rev-parse --verify --quiet "$verified^1")" || parent=""
             changed=""
-            if [ -n "$parent" ]; then changed="$(git diff --name-only "$parent" "$verified")"; fi
+            if [ -n "$parent" ]; then changed="$(git diff --no-renames --name-only "$parent" "$verified")"; fi
             if [ -z "$changed" ] || grep -qv '^registry/' <<<"$changed"; then
               break
             fi
