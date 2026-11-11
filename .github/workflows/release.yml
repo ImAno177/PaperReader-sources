@@ -66,6 +66,8 @@ jobs:
               for part in (match.group(4) or "").split(".")
           ):
               raise SystemExit("version_name must be a valid semantic version without v")
+          if len(version) > 40:
+              raise SystemExit("version_name must be at most 40 characters (host catalog limit)")
           if re.fullmatch(r"[1-9][0-9]*", os.environ["VERSION_CODE"]) is None:
               raise SystemExit("version_code must be a positive integer")
           if int(os.environ["VERSION_CODE"]) > 2_100_000_000:
@@ -82,15 +84,31 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if ! gh run list \
-            --repo "$GITHUB_REPOSITORY" \
-            --workflow android-ci.yml \
-            --branch main \
-            --event push \
-            --commit "$GITHUB_SHA" \
-            --status success \
-            --json headSha \
-            --jq 'length > 0' | grep -qx true; then
+          source_ci_green() {
+            gh run list \
+              --repo "$GITHUB_REPOSITORY" \
+              --workflow android-ci.yml \
+              --branch main \
+              --event push \
+              --commit "$1" \
+              --status success \
+              --json headSha \
+              --jq 'length > 0' | grep -qx true
+          }
+          # Registry publication pushes with GITHUB_TOKEN, which never starts CI. Accept a
+          # commit whose changes since a CI-green first-parent ancestor touch only registry/.
+          verified="$GITHUB_SHA"
+          for _ in $(seq 1 20); do
+            source_ci_green "$verified" && break
+            parent="$(git rev-parse --verify --quiet "$verified^1")" || parent=""
+            changed=""
+            if [ -n "$parent" ]; then changed="$(git diff --name-only "$parent" "$verified")"; fi
+            if [ -z "$changed" ] || grep -qv '^registry/' <<<"$changed"; then
+              break
+            fi
+            verified="$parent"
+          done
+          if ! source_ci_green "$verified"; then
             echo "Source main CI has no successful push run for $GITHUB_SHA" >&2
             exit 1
           fi
