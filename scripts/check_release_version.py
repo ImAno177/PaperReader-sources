@@ -230,11 +230,23 @@ def require_increasing_version(version_code: int, repository_root: Path) -> int:
     return maximum
 
 
+def require_current_revision(expected_commit: str, repository_root: Path) -> None:
+    revisions = subprocess.check_output(
+        ["git", "-C", str(repository_root), "rev-parse", "HEAD", "refs/remotes/origin/main"],
+        text=True,
+    ).splitlines()
+    if revisions != [expected_commit, expected_commit]:
+        raise ValueError("Release checkout is stale; dispatch again from current main")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("version_code", type=int)
+    parser.add_argument("--expected-commit")
     arguments = parser.parse_args()
     try:
+        if arguments.expected_commit is not None:
+            require_current_revision(arguments.expected_commit, Path.cwd())
         maximum = require_increasing_version(arguments.version_code, Path.cwd())
     except ValueError as error:
         raise SystemExit(str(error)) from error

@@ -75,7 +75,8 @@ jobs:
           if re.fullmatch(r"v" + semantic_version, os.environ["HOST_RELEASE_TAG"]) is None:
               raise SystemExit("host_release_tag must be v followed by a semantic version")
           PY
-          python3 scripts/check_release_version.py "$VERSION_CODE"
+          git fetch origin main
+          python3 scripts/check_release_version.py "$VERSION_CODE" --expected-commit "$GITHUB_SHA"
 
       - name: Require successful source and host CI for exact commits
         env:
@@ -324,6 +325,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          git fetch origin main
+          python3 scripts/check_release_version.py "$VERSION_CODE" --expected-commit "$GITHUB_SHA"
           gh release create "v$VERSION_NAME" \
             dist/source-semanticscholar.apk \
             dist/source-crossref.apk \
@@ -338,8 +341,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          git fetch origin main
-          git checkout --detach origin/main
+          git checkout --detach "$GITHUB_SHA"
           mkdir -p registry/v2
           cp dist/index.signed.json registry/v2/index.signed.json
           git config user.name github-actions[bot]

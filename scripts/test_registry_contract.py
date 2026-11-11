@@ -18,6 +18,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 from build_registry import EXTENSION_API_VERSION, SOURCES, build_release_entry  # noqa: E402
 from check_release_version import (  # noqa: E402
+    require_current_revision,
     require_increasing_version,
     verify_signed_index,
 )
@@ -384,6 +385,36 @@ class ReleaseVersionPreflightTest(unittest.TestCase):
                 require_increasing_version(52, root)
             with self.assertRaisesRegex(ValueError, "must exceed"):
                 require_increasing_version(51, root)
+
+            def git(*arguments: str) -> str:
+                return subprocess.check_output(["git", "-C", str(root), *arguments], text=True).strip()
+
+            git("init", "--initial-branch=main", "--quiet")
+            git("config", "user.name", "Release test")
+            git("config", "user.email", "release-test@example.invalid")
+            git("add", "registry")
+            git("-c", "commit.gpgsign=false", "commit", "--quiet", "-m", "Catalog 52")
+            queued_commit = git("rev-parse", "HEAD")
+            git("update-ref", "refs/remotes/origin/main", queued_commit)
+            require_current_revision(queued_commit, root)
+
+            self.write_envelope(
+                registry / "v2/index.signed.json",
+                self.signed_envelope(self.registry_index(53, [53])),
+            )
+            git("add", "registry")
+            git("-c", "commit.gpgsign=false", "commit", "--quiet", "-m", "Catalog 53")
+            published_commit = git("rev-parse", "HEAD")
+            git("update-ref", "refs/remotes/origin/main", published_commit)
+            git("checkout", "--quiet", "--detach", queued_commit)
+            self.assertEqual(52, require_increasing_version(53, root))
+            with self.assertRaisesRegex(ValueError, "checkout is stale"):
+                require_current_revision(queued_commit, root)
+
+            git("checkout", "--quiet", "--detach", published_commit)
+            require_current_revision(published_commit, root)
+            with self.assertRaisesRegex(ValueError, "must exceed"):
+                require_increasing_version(53, root)
 
 
 if __name__ == "__main__":

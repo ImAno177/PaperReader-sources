@@ -133,6 +133,12 @@ Release APKs are signed only by GitHub Actions. Private APK and registry signing
 in this repository. The registry tooling and the tracked public key are in [`scripts/`](scripts/) and
 [`registry/`](registry/).
 
+Release dispatches must still match current `main` before publishing; queued runs with stale catalogs
+fail and must be redispatched. Catalog updates use a normal fast-forward push from that verified commit.
+The API 2 channel is not published yet. Build against a signed host prerelease, publish and verify this
+channel, then promote the tested host according to its
+[release order](https://github.com/ImAno177/PaperReader/blob/main/docs/TESTING.md#host-and-source-release-order).
+
 ## Roadmap
 
 - Keep each provider aligned with its official upstream API and documented rate policy.
