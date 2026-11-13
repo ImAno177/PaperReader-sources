@@ -28,6 +28,9 @@ CI also runs the registry contract test, which needs no Android SDK:
 python scripts/test_registry_contract.py PaperReader
 ```
 
+That test needs Python 3 and `openssl` on `PATH`. It runs `openssl genpkey` and `openssl pkey` to
+create Ed25519 test keys.
+
 Do not commit API keys, signing material, downloaded papers, or live-response snapshots containing
 personal data. A provider must use an official public endpoint and accurately declare its search,
 metadata, content, identifier, and sort capabilities.
