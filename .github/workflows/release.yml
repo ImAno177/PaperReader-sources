@@ -19,12 +19,17 @@ on:
         description: Existing PaperReader host release tag containing app-release.apk
         required: true
         type: string
+      dry_run:
+        description: Run the compatibility, registry, and signer checks without publishing a tag, release, asset, or catalog commit
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 concurrency:
-  group: source-release
+  group: ${{ inputs.dry_run && 'source-release-dry-run' || 'source-release' }}
   cancel-in-progress: false
 
 jobs:
@@ -39,20 +44,21 @@ jobs:
       VERSION_CODE: ${{ inputs.version_code }}
       PAPERREADER_SDK_REF: ${{ inputs.paperreader_sdk_ref }}
       HOST_RELEASE_TAG: ${{ inputs.host_release_tag }}
+      DRY_RUN: ${{ inputs.dry_run }}
     steps:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           fetch-depth: 0
 
-      - name: Validate release inputs and main branch
+      - name: Validate release inputs
         shell: bash
         run: |
           python3 - <<'PY'
           import os
           import re
 
-          if os.environ["GITHUB_REF"] != "refs/heads/main":
+          if os.environ["GITHUB_REF"] != "refs/heads/main" and os.environ["DRY_RUN"] != "true":
               raise SystemExit("Releases must be dispatched from main")
           version = os.environ["VERSION_NAME"]
           semantic_version = (
@@ -78,7 +84,11 @@ jobs:
               raise SystemExit("host_release_tag must be v followed by a semantic version")
           PY
           git fetch origin main
-          python3 scripts/check_release_version.py "$VERSION_CODE" --expected-commit "$GITHUB_SHA"
+          if [ "$DRY_RUN" = true ]; then
+            python3 scripts/check_release_version.py "$VERSION_CODE"
+          else
+            python3 scripts/check_release_version.py "$VERSION_CODE" --expected-commit "$GITHUB_SHA"
+          fi
 
       - name: Check out the exact host SDK commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -185,6 +195,7 @@ jobs:
     uses: ./.github/workflows/codeql.yml
     with:
       paperreader_sdk_ref: ${{ inputs.paperreader_sdk_ref }}
+      dry_run: ${{ inputs.dry_run }}
     permissions:
       actions: read
       contents: read
@@ -192,7 +203,7 @@ jobs:
       security-events: write
 
   release:
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' && !inputs.dry_run
     needs: [compatibility, source-gate, codeql]
     runs-on: ubuntu-24.04
     timeout-minutes: 45

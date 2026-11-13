@@ -46,6 +46,11 @@ A pull request merges after the local gate above passes on its head commit and a
 open problems. No GitHub status check is required. Release workflows run the Android gate, CodeQL, and
 the release compatibility checks on the release commit before they publish anything.
 
+A release dry run (`dry_run=true`) runs the same checks from any branch, publishes nothing, and does
+not restore the extension signing keys. Use `0.0.0-dry-run` as `version_name` and
+`2100000000` as `version_code`, because the dry run still requires a version code above the verified
+catalog maximum.
+
 Do not commit API keys, signing material, downloaded papers, or live-response snapshots containing
 personal data. A provider must use an official public endpoint and accurately declare its search,
 metadata, content, identifier, and sort capabilities.
