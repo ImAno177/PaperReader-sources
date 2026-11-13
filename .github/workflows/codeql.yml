@@ -13,6 +13,11 @@ on:
         description: Immutable 40-character PaperReader SDK commit (defaults to repository variable)
         required: false
         type: string
+      dry_run:
+        description: Set by the release workflow for a dry run. Keeps its CodeQL run out of the real release group.
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   actions: read
@@ -21,7 +26,7 @@ permissions:
   security-events: write
 
 concurrency:
-  group: codeql-${{ github.workflow }}-${{ github.ref }}
+  group: codeql-${{ github.workflow }}-${{ github.ref }}${{ inputs.dry_run && '-dry-run' || '' }}
   cancel-in-progress: true
 
 jobs:

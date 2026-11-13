@@ -29,7 +29,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: source-release
+  group: ${{ inputs.dry_run && 'source-release-dry-run' || 'source-release' }}
   cancel-in-progress: false
 
 jobs:
@@ -195,6 +195,7 @@ jobs:
     uses: ./.github/workflows/codeql.yml
     with:
       paperreader_sdk_ref: ${{ inputs.paperreader_sdk_ref }}
+      dry_run: ${{ inputs.dry_run }}
     permissions:
       actions: read
       contents: read
