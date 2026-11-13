@@ -16,6 +16,6 @@ This file lists only rules specific to the source repository.
 - Add a deterministic fixture test for every parser or routing change. Live API calls are diagnostics,
   not CI assertions.
 - `scripts/test_registry_contract.py` compares provider descriptors with the `SOURCES` constants in
-  `scripts/build_registry.py`, and checks the signatures and schema of `registry/*.signed.json`. It does
+  `scripts/build_registry.py`, and checks the signatures and schema of `registry/**/*.signed.json`. It does
   not check that a registry is current. When a descriptor changes, update `SOURCES` and the matching
   registry entries by hand; a stale catalog with valid signatures still passes.
