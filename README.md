@@ -65,21 +65,9 @@ matching capability. Crossref is not a fuzzy search provider.
 - JDK 21
 - Android SDK Platform 37 and Build-Tools 36.1.0
 
-Place the PaperReader checkout in a directory named `PaperReader` under this repository, then run
-the local gate:
-
-```powershell
-.\gradlew.bat testDebugUnitTest lintDebug assembleDebug
-```
-
-For a checkout at another location, set `PAPERREADER_SDK_PATH` to its absolute path and pass it to
-Gradle:
-
-```powershell
-.\gradlew.bat `
-  -PpaperReaderSdkPath=$env:PAPERREADER_SDK_PATH `
-  testDebugUnitTest lintDebug assembleDebug
-```
+Place the PaperReader checkout in a directory named `PaperReader` under this repository, or set
+`PAPERREADER_SDK_PATH` to another absolute path. Run the local gate in
+[`CONTRIBUTING.md`](CONTRIBUTING.md#local-gate).
 
 For a local runtime install, also pass the 64-character SHA-256 certificate digest of the PaperReader
 host through `PAPERREADER_HOST_SIGNER_SHA256`:
@@ -148,11 +136,8 @@ channel, then promote the tested host according to its
 ## Contributing
 
 Keep a pull request focused on one upstream API or shared transport concern. Add deterministic local
-fixtures for parser and routing changes, document identifier and rate-limit behavior, and run:
-
-```powershell
-.\gradlew.bat testDebugUnitTest lintDebug assembleDebug
-```
+fixtures for parser and routing changes, document identifier and rate-limit behavior, and run the
+[local gate](CONTRIBUTING.md#local-gate).
 
 Do not commit API keys, downloaded papers, live-response snapshots containing personal data, signing
 keys, or keystore material. Read [`CONTRIBUTING.md`](CONTRIBUTING.md) and the host's
