@@ -80,13 +80,14 @@ host through `PAPERREADER_HOST_SIGNER_SHA256`:
 ```
 
 Each provider APK is written under that provider module's `build/outputs/apk/` directory. The
-repository's CI and release workflows use the same local build contract, but live provider calls are
+on-demand CI and release workflows use the same local build contract, but live provider calls are
 not deterministic tests.
 
-CI checks out the host SDK from the immutable `PAPERREADER_SDK_REF` repository variable. Manual CI
-runs may supply a different full commit SHA. Source releases require the matching host SDK commit and
-host release tag, successful CI for both exact commits, and a host APK whose certificate matches the
-configured signer pin.
+CI checks out the host SDK from the immutable `PAPERREADER_SDK_REF` repository variable. A manual
+dispatch may supply a different full commit SHA. Source releases require the matching host SDK commit,
+a successful host release workflow run for that commit, and a host APK whose certificate matches the
+configured signer pin. Each release also runs the Android gate and CodeQL on the release commit before
+publishing. CI is dispatched on demand (see [CONTRIBUTING.md](CONTRIBUTING.md#continuous-integration)).
 
 The local host demo enables the arXiv readable-document capability with
 `paperReaderDevSourceCapabilities=search,details,pdf_link,readable_document` and must use the same
