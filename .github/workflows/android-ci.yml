@@ -13,9 +13,6 @@ on:
         description: Immutable 40-character PaperReader SDK commit (defaults to repository variable)
         required: false
         type: string
-        description: Immutable 40-character PaperReader SDK commit (defaults to repository variable)
-        required: false
-        type: string
 
 permissions:
   contents: read
