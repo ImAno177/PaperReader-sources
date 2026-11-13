@@ -1,15 +1,18 @@
 name: CodeQL
 
 on:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
-  schedule:
-    - cron: "23 4 * * 1"
   workflow_dispatch:
     inputs:
       paperreader_sdk_ref:
+        description: Immutable 40-character PaperReader SDK commit (defaults to repository variable)
+        required: false
+        type: string
+  workflow_call:
+    inputs:
+      paperreader_sdk_ref:
+        description: Immutable 40-character PaperReader SDK commit (defaults to repository variable)
+        required: false
+        type: string
         description: Immutable 40-character PaperReader SDK commit (defaults to repository variable)
         required: false
         type: string
@@ -30,7 +33,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     env:
-      PAPERREADER_SDK_REF: ${{ github.event.inputs.paperreader_sdk_ref || vars.PAPERREADER_SDK_REF }}
+      PAPERREADER_SDK_REF: ${{ inputs.paperreader_sdk_ref || vars.PAPERREADER_SDK_REF }}
 
     steps:
       - name: Check out source extensions

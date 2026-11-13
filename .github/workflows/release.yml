@@ -80,51 +80,6 @@ jobs:
           git fetch origin main
           python3 scripts/check_release_version.py "$VERSION_CODE" --expected-commit "$GITHUB_SHA"
 
-      - name: Require successful source and host CI for exact commits
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          source_ci_green() {
-            gh run list \
-              --repo "$GITHUB_REPOSITORY" \
-              --workflow android-ci.yml \
-              --branch main \
-              --event push \
-              --commit "$1" \
-              --status success \
-              --json headSha \
-              --jq 'length > 0' | grep -qx true
-          }
-          # Registry publication pushes with GITHUB_TOKEN, which never starts CI. Accept a
-          # commit whose changes since a CI-green first-parent ancestor touch only registry/.
-          verified="$GITHUB_SHA"
-          for _ in $(seq 1 20); do
-            source_ci_green "$verified" && break
-            parent="$(git rev-parse --verify --quiet "$verified^1")" || parent=""
-            changed=""
-            if [ -n "$parent" ]; then changed="$(git diff --no-renames --name-only "$parent" "$verified")"; fi
-            if [ -z "$changed" ] || grep -qv '^registry/' <<<"$changed"; then
-              break
-            fi
-            verified="$parent"
-          done
-          if ! source_ci_green "$verified"; then
-            echo "Source main CI has no successful push run for $GITHUB_SHA" >&2
-            exit 1
-          fi
-          if ! gh run list \
-            --repo ImAno177/PaperReader \
-            --workflow android-ci.yml \
-            --branch main \
-            --event push \
-            --commit "$PAPERREADER_SDK_REF" \
-            --status success \
-            --json headSha \
-            --jq 'length > 0' | grep -qx true; then
-            echo "Host main CI has no successful push run for $PAPERREADER_SDK_REF" >&2
-            exit 1
-          fi
-
       - name: Check out the exact host SDK commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -215,9 +170,30 @@ jobs:
       - name: Verify source registry and descriptor parity
         run: python3 scripts/test_registry_contract.py PaperReader
 
+  source-gate:
+    name: Source Android CI gate
+    needs: compatibility
+    uses: ./.github/workflows/android-ci.yml
+    with:
+      paperreader_sdk_ref: ${{ inputs.paperreader_sdk_ref }}
+    permissions:
+      contents: write
+
+  codeql:
+    name: CodeQL
+    needs: compatibility
+    uses: ./.github/workflows/codeql.yml
+    with:
+      paperreader_sdk_ref: ${{ inputs.paperreader_sdk_ref }}
+    permissions:
+      actions: read
+      contents: read
+      packages: read
+      security-events: write
+
   release:
     if: github.ref == 'refs/heads/main'
-    needs: compatibility
+    needs: [compatibility, source-gate, codeql]
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     permissions:

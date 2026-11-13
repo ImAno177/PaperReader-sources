@@ -1,22 +1,24 @@
 name: Android CI
 
 on:
-  push:
-    branches: [main]
-  pull_request:
   workflow_dispatch:
     inputs:
       paperreader_sdk_ref:
         description: Immutable 40-character PaperReader SDK commit (defaults to repository variable)
         required: false
         type: string
+  workflow_call:
+    inputs:
+      paperreader_sdk_ref:
+        description: Immutable 40-character PaperReader SDK commit (defaults to repository variable)
+        required: false
+        type: string
+        description: Immutable 40-character PaperReader SDK commit (defaults to repository variable)
+        required: false
+        type: string
 
 permissions:
   contents: read
-
-concurrency:
-  group: sources-ci-${{ github.ref }}
-  cancel-in-progress: true
 
 jobs:
   dependency-submission:
@@ -25,7 +27,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     env:
-      PAPERREADER_SDK_REF: ${{ github.event.inputs.paperreader_sdk_ref || vars.PAPERREADER_SDK_REF }}
+      PAPERREADER_SDK_REF: ${{ inputs.paperreader_sdk_ref || vars.PAPERREADER_SDK_REF }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - name: Require immutable SDK commit
@@ -76,7 +78,6 @@ jobs:
           dependency-graph-include-configurations: ".*[Rr]eleaseRuntimeClasspath"
 
   dependency-review:
-    if: github.event_name == 'pull_request'
     needs: dependency-submission
     permissions:
       contents: read
@@ -86,10 +87,11 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294
         with:
-          # Release registry commits made with GITHUB_TOKEN do not trigger a new
-          # workflow, so their exact base SHA may not have a dependency snapshot.
-          # In that case review the complete head runtime graph immediately instead
-          # of waiting ten minutes for a baseline that cannot appear.
+          # Runs are on demand, so the main base may have no dependency snapshot.
+          # Review the complete head runtime graph immediately instead of waiting
+          # for a baseline that may never appear.
+          base-ref: main
+          head-ref: ${{ github.sha }}
           retry-on-snapshot-warnings: false
           # Build plugins are development-scope; never allow a vulnerable runtime dependency.
           fail-on-scopes: runtime
@@ -97,7 +99,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     env:
-      PAPERREADER_SDK_REF: ${{ github.event.inputs.paperreader_sdk_ref || vars.PAPERREADER_SDK_REF }}
+      PAPERREADER_SDK_REF: ${{ inputs.paperreader_sdk_ref || vars.PAPERREADER_SDK_REF }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - name: Require immutable SDK commit
